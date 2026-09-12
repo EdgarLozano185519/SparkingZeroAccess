@@ -20,7 +20,8 @@ User:
 - **Game directory:** C:\Program Files (x86)\Steam\steamapps\common\DRAGON BALL Sparking! ZERO
 - **Mod framework:** UE4SS v3.0.1 (Lua mod)
 - **Speech:** UniversalSpeech via speech_bridge.dll (Lua C module)
-- **Deploy:** `accessforge install --from SparkingZeroAccess` after any mod file changes. If it fails (file locked), wait 10 seconds and retry.
+- **Deploy:** `powershell -ExecutionPolicy Bypass -File helpers\Deploy-Mod.ps1` after any mod file changes (retries locked files automatically). Requires UE4SS + mods.txt entry from the installer.
+- **Installer:** `powershell -ExecutionPolicy Bypass -File installer\build.ps1` → `build\output\`. Inno Setup 6 script: `installer\SparkingZeroAccess.iss`. Version lives in `VERSION`.
 
 # Coding Principles
 

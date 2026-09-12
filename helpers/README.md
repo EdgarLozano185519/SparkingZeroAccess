@@ -1,6 +1,16 @@
 # Helpers
 
-Scripts for maintaining mod data. Run with [uv](https://docs.astral.sh/uv/).
+Scripts for maintaining mod data and testing. Python scripts run with [uv](https://docs.astral.sh/uv/).
+
+## Deploy-Mod.ps1
+
+Copies `SparkingZeroAccess/` into the game's `Mods\SparkingZeroAccess\Scripts\` folder for testing. Finds the game through Steam, or pass `-GameDir`. Retries files the running game has locked.
+
+```
+powershell -ExecutionPolicy Bypass -File helpers\Deploy-Mod.ps1
+```
+
+Run the installer once first so UE4SS, the UTOC bypass, and the `mods.txt` entry are in place.
 
 ## Update-CharaNames.py
 

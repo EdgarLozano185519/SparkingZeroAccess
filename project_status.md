@@ -18,6 +18,7 @@
 - [x] speech_bridge.dll (Lua C module) compiled and deployed
 - [x] SparkingZeroAccess Lua mod created and registered in mods.txt
 - [x] Speech output confirmed working (F9 test, NVDA spoke text)
+- [x] Inno Setup installer replaces AccessForge (2026-09-12) — see "Distribution / Installer"
 
 ## Phase 1: UI Exploration (DONE)
 - [x] First UI dump completed (F10 / SparkingZeroAccess_dump.txt)
@@ -302,6 +303,62 @@ Source: community Google Sheet, auto-updated via `uv run scripts/Update-CharaNam
 5. Expanded title: Start + Options + Quit (WBP_Title_Button_C: StartButton, OptionButton, QuitButton)
 6. Start → Main menu
 
+## Distribution / Installer (2026-09-12)
+AccessForge removed (accessforge.yml deleted). Version now lives in `VERSION`.
+
+Files:
+- `installer\SparkingZeroAccess.iss` — Inno Setup 6 script
+- `installer\build.ps1` — downloads UE4SS_v3.0.1.zip (SHA256 pinned, cached in build\cache), extracts deps\utoc-bypass.zip, patches UE4SS-settings.ini (bUseUObjectArrayCache=false, GraphicsAPI=dx11, GuiConsoleVisible=0), builds `build\output\SparkingZeroAccess-Setup-<ver>.exe` and `SparkingZeroAccess-<ver>-manual.zip` (Win64 layout)
+- `helpers\Deploy-Mod.ps1` — dev deploy (robocopy /MIR into Mods\SparkingZeroAccess\Scripts, retries locked files)
+- `.github\workflows\release.yml` — choco installs Inno Setup, runs build.ps1, uploads exe + manual zip
+- `THIRD-PARTY-NOTICES.txt` — license texts and credits: UE4SS (MIT, Narknon), Lua 5.4.7 (MIT, in speech_bridge.dll), UniversalSpeech (MIT, Quentin Cosendey), NVDA Controller Client (LGPL 2.1), ZDSRAPI.dll, UTOC bypass (DeathChaos). Installed to Mods\SparkingZeroAccess\ and included in the manual zip. Update it when a bundled component changes
+
+Installer behavior:
+- Game detection order: Steam uninstall key "Steam App 1790600" InstallLocation (HKLM 64/32) → Steam path (HKCU SteamPath / HKLM32 InstallPath) → each library in libraryfolders.vdf → appmanifest_1790600.acf installdir
+- Valid game folder = contains SparkingZERO\Binaries\Win64\SparkingZERO-Win64-Shipping.exe. Selecting the Win64 folder is auto-corrected. Checked in NextButtonClick and PrepareToInstall (silent installs too)
+- Installs UE4SS (full zip minus README/Changelog), bypass, mod into Mods\SparkingZeroAccess\Scripts (Scripts folder wiped first)
+- mods.txt: installed only if missing; then `SparkingZeroAccess : 1` added at top, other entries kept
+- Removes AccessForge-era `Mods\dragon-ball-sparking-zero-access\` folder and its mods.txt entry (AccessForge used the manifest id as folder/slug; would cause double speech)
+- Uninstaller in Program Files\Sparking Zero Access (not in game folder). Uninstall removes UE4SS, bypass, mod, AE_debug, UE4SS.log; removes only our mods.txt entry
+- Admin by default; `/CURRENTUSER` allowed on command line. CloseApplications=yes offers to close the game
+- Finish page: unchecked "Start game" option (steam://rungameid/1790600). Text comes from `FinishedLabelNoIcons` (not `FinishedLabel`, since no shortcuts are created)
+
+Existing copy dialog (added 2026-09-12):
+- Checked in InitializeSetup, before the wizard. Registered install = this setup's uninstall key `{7C3E9A52-4D1B-4F8E-9B26-1A5D0E83C4F7}_is1` in HKLM64, HKLM32 or HKCU. Unregistered copy = `Mods\SparkingZeroAccess\Scripts\main.lua` or the legacy AccessForge folder in the detected game folder
+- TaskDialogMsgBox with command links: Replace (IDYES), Uninstall (IDNO), Cancel. MSAA exposes them as push buttons with the note as description
+- Replace: skips the Welcome and folder pages and goes to Ready. Installs into the folder that has the mod (registry InstallLocation for registered installs, unless /DIR is given)
+- Uninstall, registered: runs UninstallString with /SILENT, waits up to 60s for unins000.exe and the registry key to disappear, then shows "was uninstalled"
+- Uninstall, unregistered (user decision: mod only): deletes Mods\SparkingZeroAccess, the legacy folder, AE_debug, and the mods.txt entries. UE4SS and bypass are kept
+- /VERYSILENT skips the dialog and replaces. /DIR= also drives detection, ahead of Steam
+- Game running check (WMI query for SparkingZERO-Win64-Shipping.exe) with Retry/Cancel: before a dialog uninstall and in InitializeUninstall
+- Inno gotcha: a [Code] line starting with `[` (for example a wrapped open array literal) is parsed as a section tag. Use an array variable instead
+
+Automated tests passed (fake game folder, silent /CURRENTUSER install):
+- Detection found real game on this PC; install exit 0; all files present; settings patched; stale script and legacy folder removed; mods.txt merged correctly
+- Uninstall removed files, registry entry, uninstaller folder; mods.txt kept other entries
+- Wrong folder rejected with no files written; manual zip uses forward-slash entry names
+- Note: test folders need short paths — deep UE4SS files exceed MAX_PATH under long temp paths (installer rolled back cleanly)
+
+Dialog tests passed (UI Automation clicking the real dialog, fake game folders, /CURRENTUSER):
+- Unregistered copy → Uninstall: mod and legacy folders removed, UE4SS kept, mods.txt entries removed
+- Cancel: nothing changed
+- Registered → Replace: location read from registry, Ready page shown directly, reinstall removed a stale script
+- Registered → Uninstall: files, registry entry, and uninstaller folder removed
+- Test scripts were kept in the session scratchpad, not the repo
+
+Pending tests (user):
+- [ ] Fresh install with NVDA on the real game: welcome page, folder page ("Setup found..." text), UAC, finish page
+- [ ] Run the installer again: the dialog reads its title, folder, and both buttons with their notes. Try Replace
+- [ ] Run the installer again and choose Uninstall
+- [ ] Launch game after install → "Press confirm to start"
+- [ ] Release workflow on GitHub Actions (not run yet)
+
+Follow-ups:
+- NVDA Controller Client is LGPL 2.1. The notices link to the full license text; consider bundling the text itself (lgpl-2.1.txt from gnu.org)
+- UTOC bypass redistribution permission not verified (Nexus page blocked automated access). ZDSRAPI.dll license unknown
+- The repo has no license of its own
+- AppPublisher is "Sparking Zero Access contributors". Change if desired
+
 ## Known Issues
 - UniversalSpeech reports "JAWS" as detected engine even when NVDA is active (cosmetic, speech works correctly through NVDA)
 - UE4SS GUI debug window disabled (GuiConsoleVisible=0) for accessibility
@@ -331,6 +388,9 @@ Source: community Google Sheet, auto-updated via `uv run scripts/Update-CharaNam
 - Git repo initialized at mod directory (branch: main)
 
 ## Files Modified in Game Directory
+Installed by the installer: dwmapi.dll, UE4SS.dll, UE4SS-settings.ini, Mods\ (UE4SS default mods + ours), dsound.dll, plugins\DBSparkingZeroUTOCBypass.asi
+
+Original manual setup:
 - SparkingZERO\Binaries\Win64\UE4SS-settings.ini (bUseUObjectArrayCache, GraphicsAPI, GuiConsoleVisible)
 - SparkingZERO\Binaries\Win64\Mods\mods.txt (added SparkingZeroAccess)
 - SparkingZERO\Binaries\Win64\Mods\SparkingZeroAccess\ (our mod)

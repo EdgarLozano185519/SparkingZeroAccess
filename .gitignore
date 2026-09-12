@@ -4,6 +4,7 @@
 # Build output
 bin/
 obj/
+build/
 
 # Decompiled game code (large, user-specific)
 decompiled/

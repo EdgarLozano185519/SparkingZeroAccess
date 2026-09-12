@@ -2,7 +2,7 @@
 
 A screen reader accessibility mod for **DRAGON BALL: Sparking! ZERO** on PC (Steam).
 
-This mod reads game UI elements aloud through your screen reader (NVDA, JAWS, or SAPI fallback), making the game navigable for blind and visually impaired players. It tracks keyboard focus, reads menu labels, announces battle HUD changes, and more — all without altering gameplay or overriding game controls.
+The mod reads the game's menus, character select, battles, story mode, shop, and online lobbies aloud through your screen reader (NVDA, JAWS, or Windows SAPI). It follows keyboard and controller focus and announces important changes, without altering gameplay or overriding game controls.
 
 ## Features
 
@@ -11,11 +11,11 @@ This mod reads game UI elements aloud through your screen reader (NVDA, JAWS, or
 - Settings read with label, current value, and description
 - Dialogs and help windows announced automatically
 - List position ("3 of 12") and tab changes
-- Button prompts read as text (e.g. "Triangle" instead of an icon)
+- Button prompts read as text (for example "Triangle" instead of an icon)
 
 ### Character Select
 - Character names and DP costs in the roster grid (208 characters supported)
-- Team slots with character name, DP, and slot number
+- Team slots with character name, DP cost, and slot number
 - Skills with type, name, button combo, cost, and description
 - Team overview with total DP
 - Both player sides readable
@@ -23,126 +23,177 @@ This mod reads game UI elements aloud through your screen reader (NVDA, JAWS, or
 ### Battle
 - HP, KI, and Sparking gauge changes for you and your opponent
 - Skill point changes
-- Match timer with countdown
+- Match timer
+- Battle intro skip prompt
+- Match results: player level, rank up, rewards, and win streak
 - Works in local and online matches
+
+### Episode Battle (Story Mode)
+- Character select with chapter title and story text
+- Story map: saga, arc, and chapter names, node navigation, and branch conditions
+- Cutscene narration and skip prompts
+
+### Shop
+- Item names and prices, followed by descriptions
+- Category tabs and Zeni balance
+- Purchase and purchase complete dialogs
 
 ### Online
 - Player Match room lobby with player names, status, and win counts
+- Room settings and the room sub-menu
 - Room ID input with digit-by-digit navigation
-- Player join/leave announcements
+- Player join and leave announcements
 - Rank Match lobby
 
-## Installation
+## Requirements
 
-### Requirements
 - DRAGON BALL: Sparking! ZERO (Steam, PC)
 - A screen reader: NVDA (recommended), JAWS, or Windows SAPI
 - Windows 10 or later (64-bit)
 
-### Using AccessForge (Recommended)
+## Installation
 
-[AccessForge](https://github.com/AccessForge/AccessForge) is the easiest way to install and keep the mod up to date. It takes care of everything for you — the mod loader, dependencies, and the mod itself. It works fully with screen readers like NVDA.
+### Installer (Recommended)
 
-1. Download `AccessForge.exe` from [AccessForge Releases](https://github.com/AccessForge/AccessForge/releases)
-2. Place it anywhere you like and run it
-3. Find Sparking Zero Access in the mod list, select it, and click Install
+1. Download `SparkingZeroAccess-Setup-<version>.exe` from the [Releases page](https://github.com/EdgarLozano185519/SparkingZeroAccess/releases).
+2. Close the game, run the installer, and accept the Windows administrator prompt.
+3. The installer finds the game through Steam, including Steam libraries on other drives. If it can't, press Browse and choose the game folder, the one that contains `SparkingZERO.exe`.
+4. Finish the wizard and start the game. On the title screen you should hear "Press confirm to start".
 
-That's it. When updates are released, they show up in the Updates tab — select and click Update, no manual file management needed.
+The installer sets up everything the mod needs:
+- UE4SS v3.0.1 mod loader, configured for this game
+- UTOC Signature Bypass, which lets the game load mods
+- The mod itself, enabled in `Mods\mods.txt`. Other UE4SS mods listed there are kept.
 
 ### Manual Installation
 
-1. **Install UE4SS v3.0.1** into `SparkingZERO\Binaries\Win64\`:
-   - Download from [UE4SS releases](https://github.com/UE4SS-RE/RE-UE4SS/releases)
-   - Extract all files into the `Win64` directory
+1. Download `SparkingZeroAccess-<version>-manual.zip` from the [Releases page](https://github.com/EdgarLozano185519/SparkingZeroAccess/releases).
+2. Extract it into `SparkingZERO\Binaries\Win64\` inside the game folder, replacing existing files.
+3. Start the game. On the title screen you should hear "Press confirm to start".
 
-2. **Install UTOC Signature Bypass**:
-   - Required for UE4SS to work with this game
-   - Place `dsound.dll` and `plugins\DBSparkingZeroUTOCBypass.asi` in the `Win64` directory
+The zip contains its own `Mods\mods.txt`, which replaces yours. If you use other UE4SS mods, enable them in that file again.
 
-3. **Install the mod**:
-   - Copy the contents of `SparkingZeroAccess\` into `SparkingZERO\Binaries\Win64\Mods\SparkingZeroAccess\Scripts\`
-   - Add `SparkingZeroAccess : 1` to `Mods\mods.txt`
+## Updating and Uninstalling
 
-4. **Launch the game**. You should hear "Press confirm to start" on the title screen.
+When the installer finds the mod already installed, it asks what to do before the wizard starts:
+- **Replace** installs the new version over the existing copy and goes straight to the Ready to Install page.
+- **Uninstall** removes the mod and closes setup.
+  - For a copy installed by this installer, it also removes UE4SS and the UTOC bypass.
+  - For a copy installed another way (manually or with AccessForge), it removes only the mod and its `mods.txt` entry. UE4SS and the bypass stay, since other mods may use them.
+- **Cancel** closes setup without changing anything.
+
+You can also uninstall "Sparking Zero Access" from Windows Settings, Apps, Installed apps. Setup and the uninstaller both ask you to close the game first if it's running.
+
+Command-line options:
+- `/VERYSILENT` installs without showing the wizard. An existing copy is replaced without asking.
+- `/DIR="<game folder>"` uses that game folder instead of detecting it through Steam.
+
+## Troubleshooting
+
+- **No speech in game:** start your screen reader before the game. Then open `UE4SS.log` in `SparkingZERO\Binaries\Win64\` and search for `[AE]`. The line `[AE] Speech bridge loaded!` means speech started; `[AE] Speech bridge failed` is followed by the reason.
+- **The installer can't find the game:** press Browse and select the game folder. It contains `SparkingZERO.exe` and a folder named `SparkingZERO`.
+
+## Known Issues
+
+- New DLC characters must be added to `chara_names.lua` before their names are read
+- Some option values are shown as images instead of text, for example language selection
+- The control style selector is a full-screen overlay without keyboard focus, so it isn't read
+- Character select: costume and form selection, sort and filter, and team presets aren't read yet
+- Battle: the health bar count and transformation count aren't announced yet
+- Shop: page navigation and the Customize screen aren't read yet
+- Episode Battle: moving between neighboring path nodes on the story map isn't announced
 
 ## Development
 
 ### Project Structure
 
-```
-SparkingZeroAccess/         # The Lua mod (deployed to game)
-  main.lua                  # Orchestrator: focus tracking, keybinds, init
-  helpers.lua               # TryCall, TryGetProperty, GetWidgetName, IsValidRef
-  speech.lua                # Speech init, Speak/SpeakQueued
-  widget_reader.lua         # Text reading, widget matching, label resolution
-  poll_trackers.lua         # Dialog, help window, screen change, room polling
-  icon_parser.lua           # RichText icon markup to readable text
-  battle.lua                # Battle HUD: HP/KI/Sparking, opponent tracking
-  team_overview.lua         # Team setup: slot navigation, character names
-  chara_roster.lua          # Character roster: grid names, skills
-  chara_names.lua           # Texture ID to character name lookup table
-  skill_list.lua            # Skill list overlay reading
-  debug_tools.lua           # Debug dump utilities (F3-F5)
-  speech_bridge.dll         # Lua C module bridging to UniversalSpeech
-  UniversalSpeech.dll       # Screen reader abstraction library
-  nvdaControllerClient.dll  # NVDA support
-  ZDSRAPI.dll               # Additional speech support
-
-speech_bridge/              # Speech bridge source code
-  speech_bridge.c           # Lua C module source
-  speech_bridge.dll         # Compiled bridge
-```
+- `SparkingZeroAccess/` — the Lua mod, installed to `Mods\SparkingZeroAccess\Scripts`
+  - `main.lua` — orchestrator: focus tracking, keybinds, init
+  - `helpers.lua` — TryCall, TryGetProperty, GetWidgetName, IsValidRef
+  - `speech.lua` — speech init, Speak and SpeakQueued
+  - `widget_reader.lua` — text reading, widget matching, label resolution
+  - `poll_trackers.lua` — dialog, help window, screen change, and room polling
+  - `icon_parser.lua` — RichText icon markup to readable text
+  - `battle.lua` — battle HUD: HP, KI, Sparking, opponent tracking, match results
+  - `episode_battle.lua` — Episode Battle: character select, story map, cutscenes
+  - `shop.lua` — shop: item grid, categories, purchase dialogs
+  - `team_overview.lua` — team setup: slot navigation, character names
+  - `chara_roster.lua` — character roster: grid names, skills
+  - `chara_names.lua` — texture ID to character name and DP lookup table
+  - `skill_list.lua` — skill list overlay reading
+  - `debug_tools.lua` — debug dumps (F3 to F5)
+  - `speech_bridge.dll` — Lua C module bridging to UniversalSpeech
+  - `UniversalSpeech.dll`, `nvdaControllerClient.dll`, `ZDSRAPI.dll` — screen reader libraries
+- `speech_bridge/` — speech bridge source, see [speech_bridge/README.md](speech_bridge/README.md)
+- `installer/` — Windows installer
+  - `SparkingZeroAccess.iss` — Inno Setup script: game detection, Replace and Uninstall, install and uninstall
+  - `build.ps1` — builds the installer and manual zip
+- `helpers/` — development scripts, see [helpers/README.md](helpers/README.md)
+- `deps/utoc-bypass.zip` — UTOC Signature Bypass, bundled into releases
+- `docs/` — modding guide, state management guide, UE4SS API reference
+- `THIRD-PARTY-NOTICES.txt` — licenses for bundled components
+- `VERSION` — current release version
+- `project_status.md` — development tracking, widget structures, API notes
 
 ### How It Works
 
-The mod polls for keyboard focus changes every 16ms using UE4SS's `LoopAsync`. When focus moves to a new widget:
+The mod polls for keyboard focus changes every 16 ms using UE4SS's `LoopAsync`. When focus moves to a new widget:
 
-1. **Fast path**: Check `WidgetLabels` table for known widget names (instant lookup)
-2. **Screen-specific handlers**: Character select, team overview, skill list, room ID input, etc. each have dedicated handlers
-3. **Generic path**: Read widget text via `caption` property or child TextBlock iteration
-4. **Slow fallback**: `FindAllOf("TextBlock")` scan filtered by widget path
+1. **Fast path:** check the `WidgetLabels` table for known widget names
+2. **Screen-specific handlers:** character select, team overview, skill list, room ID input, and others have dedicated handlers
+3. **Generic path:** read widget text through the `caption` property or child TextBlocks
+4. **Slow fallback:** a `FindAllOf("TextBlock")` scan filtered by widget path
 
-Speech output uses UniversalSpeech via a custom Lua C module (`speech_bridge.dll`) that statically links Lua 5.4 and dynamically loads UniversalSpeech.
-
-### Building the Speech Bridge
-
-From the `speech_bridge/` directory:
-
-```
-gcc -shared -o speech_bridge.dll speech_bridge.c lua-5.4.7/src/liblua54.a -luser32
-```
-
-Requires WinLibs MinGW-w64 (installable via `winget install winlibs.mingw-w64`).
+Speech goes through `speech_bridge.dll`, a Lua C module that statically links Lua 5.4 and loads UniversalSpeech at runtime.
 
 ### Deploying Changes
 
-After modifying files in `SparkingZeroAccess/`:
+Run the installer once so UE4SS and the bypass are in place. After changing files in `SparkingZeroAccess/`, copy them into the game:
 
 ```
-accessforge install --from SparkingZeroAccess
+powershell -ExecutionPolicy Bypass -File helpers\Deploy-Mod.ps1
 ```
+
+### Building the Installer
+
+Requires [Inno Setup 6.3 or newer](https://jrsoftware.org/isinfo.php) (`winget install JRSoftware.InnoSetup`).
+
+```
+powershell -ExecutionPolicy Bypass -File installer\build.ps1
+```
+
+The script downloads UE4SS v3.0.1 (checked against a pinned SHA256 hash), applies the UE4SS settings the mod needs, and writes `SparkingZeroAccess-Setup-<version>.exe` and `SparkingZeroAccess-<version>-manual.zip` to `build\output\`. The version comes from the `VERSION` file.
+
+### Releasing
+
+Run the **Release** workflow from the GitHub Actions tab with a version number. It updates `VERSION`, builds the installer and manual zip, and publishes both to a GitHub release.
+
+### Building the Speech Bridge
+
+See [speech_bridge/README.md](speech_bridge/README.md). It needs MinGW-w64 and the Lua 5.4.7 source.
 
 ### Debug Tools
 
-Press **F5** in-game to toggle continuous debug dumping. Dumps are written to `SparkingZERO\Binaries\Win64\AE_debug\debug_dump.txt` every 250ms when changes are detected. Each entry includes the focused widget with subtree text, visible widget classes, and all visible text on screen.
+Press **F5** in game to toggle continuous debug dumping. Dumps are written to `SparkingZERO\Binaries\Win64\AE_debug\debug_dump.txt` every 250 ms when something changes. Each entry includes the focused widget with its subtree text, visible widget classes, and all visible text on screen.
 
-Additional dumps:
-- **F3** — Battle state and gauge values
-- **F4** — Character select texture IDs
+Other dumps:
+- **F3** — battle state and gauge values
+- **F4** — character select texture IDs
 
 ### Adding New Characters
 
-When DLC characters are added to the game, update `chara_names.lua` with the new texture IDs and display names. The texture ID format is `T_UI_ChThumbP1_XXXX_YY_ZZ`. Run `uv run scripts/Update-CharaNames.py` to pull the latest data from the community spreadsheet.
+When DLC characters are added to the game, `chara_names.lua` needs their texture IDs (format `T_UI_ChThumbP1_XXXX_YY_ZZ`), display names, and DP costs. Run `uv run helpers/Update-CharaNames.py` to regenerate it from the community spreadsheet. See [helpers/README.md](helpers/README.md).
 
-## Known Issues
+## Credits and Licenses
 
-- Team slot character names use texture ID lookup — new DLC characters need to be added to `chara_names.lua`
-- Some options screens have values displayed as images instead of text (e.g. language selection)
-- Control style selector uses a full-screen overlay without keyboard focus
-- Victory and match result screens have code written but need a safe polling approach
+Sparking Zero Access bundles these third-party components. Full license texts are in [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt), and the installer places a copy in `Mods\SparkingZeroAccess\`.
+- [UE4SS](https://github.com/UE4SS-RE/RE-UE4SS) v3.0.1 — MIT License
+- [Lua](https://www.lua.org) 5.4.7, built into `speech_bridge.dll` — MIT License
+- [UniversalSpeech](https://github.com/qtnc/UniversalSpeech) by Quentin Cosendey — MIT License
+- NVDA Controller Client by [NV Access](https://www.nvaccess.org) — LGPL 2.1
+- ZDSR API (`ZDSRAPI.dll`), distributed with UniversalSpeech
+- [UTOC Signature Bypass Patch](https://www.nexusmods.com/dragonballsparkingzero/mods/18) by DeathChaos
 
-## License
+The installer is built with [Inno Setup](https://jrsoftware.org/isinfo.php).
 
-This project is an accessibility mod created to make DRAGON BALL: Sparking! ZERO playable for blind and visually impaired users. It does not modify game files or alter gameplay.
-
-DRAGON BALL: Sparking! ZERO is developed by Spike Chunsoft and published by Bandai Namco Entertainment.
+DRAGON BALL: Sparking! ZERO is developed by Spike Chunsoft and published by Bandai Namco Entertainment. This is a fan-made accessibility mod, not affiliated with either company. It adds files to the game folder but does not change the game's own files or gameplay.
