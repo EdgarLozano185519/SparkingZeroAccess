@@ -1,12 +1,8 @@
 --[[
     team_overview.lua — Team setup screen reading
     Handles the 5 team slots (HitButton_0 through _4), Remove/Switch buttons.
-    Reads character names from the speech bubble (Text_CharaName in
-    WBP_OBJ_Common_TexWin_Black).
-
-    Strategy: Hook TextBlock:SetText to capture character names as the game
-    sets them, since LoopAsync polling can't read TextBlock text reliably
-    (different UObject access context than keybind callbacks).
+    Character names come from the slot portrait texture IDs (chara_names.lua).
+    Called from the focus poll, which runs on the game thread (game_thread.lua).
 ]]
 
 local H = require("helpers")
@@ -16,106 +12,35 @@ local CharaNames = require("chara_names")
 
 local TeamOV = {}
 
--- === SETTEXT HOOK: CAPTURE BUBBLE NAME ===
--- The game calls SetText on Text_CharaName when updating the speech bubble.
--- We hook that call to capture the name without needing to read from LoopAsync.
-
-local _capturedBubbleName = nil  -- latest character name captured by hook
-local _hookRegistered = false
-
---- Initialize the SetText hook. Call once at startup.
-function TeamOV.InitHook()
-    if _hookRegistered then return end
-
-    -- Try hooking TextBlock:SetText — this fires when ANY TextBlock text changes
-    local hookPath = "/Script/UMG.TextBlock:SetText"
-    local ok, err = pcall(function()
-        RegisterHook(hookPath, function(context, newText)
-            -- context = the TextBlock being modified
-            -- newText = the FText value being set
-            local nameOk, wName = pcall(function() return context:get():GetFullName() end)
-            if not nameOk then return end
-
-            -- Only care about Text_CharaName inside the speech bubble
-            if wName:find("Text_CharaName", 1, true)
-               and wName:find("WBP_OBJ_Common_TexWin_Black", 1, true)
-               and wName:find("Transient", 1, true) then
-                -- Extract the text value
-                local textOk, textStr = pcall(function()
-                    return newText:get():ToString()
-                end)
-                if textOk and textStr and textStr:match("%S") then
-                    _capturedBubbleName = textStr
-                    print("[AE] SetText hook captured bubble name: " .. textStr)
-                else
-                    -- Game cleared the text (empty or whitespace)
-                    print("[AE] SetText hook: Text_CharaName cleared")
-                end
-            end
-        end)
-        _hookRegistered = true
-        print("[AE] TextBlock:SetText hook registered for bubble name capture")
-    end)
-
-    if not ok then
-        print("[AE] WARNING: Could not register SetText hook: " .. tostring(err))
-        print("[AE] Will fall back to direct read (may not work from LoopAsync)")
-    end
-end
-
---- Consume the captured bubble name (returns it once, then clears).
-function TeamOV.ConsumeCapturedName()
-    local result = _capturedBubbleName
-    _capturedBubbleName = nil
-    return result
-end
-
---- Get the captured name without consuming it (for checking).
-function TeamOV.GetCapturedName()
-    return _capturedBubbleName
-end
-
---- Clear captured name (e.g. on screen transition).
-function TeamOV.ClearCapturedName()
-    _capturedBubbleName = nil
-end
-
 -- === HOLD BUTTON CAPTION CACHE ===
--- TextBlock captions need game thread context to resolve.
--- We queue a read via ExecuteInGameThread and cache the results.
+-- Read directly: this runs on the game thread already. Don't wrap it in
+-- ExecuteInGameThread (queuing from inside a game thread action corrupts
+-- UE4SS's action list, see game_thread.lua).
 
 local _holdButtonCaptions = {}  -- btnId -> caption string
-local _holdCaptionsPending = false
 
---- Queue game-thread reads of hold button captions.
---- Results appear in _holdButtonCaptions on next poll cycle.
+--- Read hold button captions into the cache used by ReadGuideBar.
 function TeamOV.RequestHoldButtonCaptions()
-    if _holdCaptionsPending then return end
-    _holdCaptionsPending = true
-    ExecuteInGameThread(function()
-        -- Read ALL caption TextBlocks inside BtnSet hold buttons.
-        -- Don't use FindFirstOf per class — there can be duplicate instances
-        -- (e.g. roster grid also has a HoldButton_00). Filter by BtnSet parent.
-        local textBlocks = FindAllOf("TextBlock")
-        if textBlocks then
-            for _, tb in ipairs(textBlocks) do
-                local ok, tbPath = pcall(function() return tb:GetFullName() end)
-                if ok and tbPath:find("Transient", 1, true)
-                   and tbPath:find("BtnSet", 1, true)
-                   and GetWidgetName(tb) == "caption" then
-                    local btnId = tbPath:match("(WBP_OBJ_Common_HoldButton_%d+)")
-                    if btnId then
-                        local ok2, text = pcall(function() return tb:GetText():ToString() end)
-                        if ok2 and text and text:match("%S") then
-                            _holdButtonCaptions[btnId] = text
-                            print("[AE] GameThread hold caption: " .. btnId .. " = " .. text)
-                        end
-                    end
+    -- Read ALL caption TextBlocks inside BtnSet hold buttons.
+    -- Don't use FindFirstOf per class — there can be duplicate instances
+    -- (e.g. roster grid also has a HoldButton_00). Filter by BtnSet parent.
+    local textBlocks = FindAllOf("TextBlock")
+    if not textBlocks then return end
+    for _, tb in ipairs(textBlocks) do
+        local ok, tbPath = pcall(function() return tb:GetFullName() end)
+        if ok and tbPath:find("Transient", 1, true)
+           and tbPath:find("BtnSet", 1, true)
+           and GetWidgetName(tb) == "caption" then
+            local btnId = tbPath:match("(WBP_OBJ_Common_HoldButton_%d+)")
+            if btnId then
+                local ok2, text = pcall(function() return tb:GetText():ToString() end)
+                if ok2 and text and text:match("%S") then
+                    _holdButtonCaptions[btnId] = text
+                    print("[AE] Hold caption: " .. btnId .. " = " .. text)
                 end
             end
         end
-        _holdCaptionsPending = false
-    end)
+    end
 end
 
 --- Check if hold button captions have been cached.

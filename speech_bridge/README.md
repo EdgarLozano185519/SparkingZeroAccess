@@ -1,5 +1,7 @@
 # Speech Bridge — Build Instructions
 
+**Retired 2026-09-12.** The mod no longer loads `speech_bridge.dll`: it writes speech to the named pipe `\\.\pipe\SparkingZeroAccess`, served by the NVDA add-on in `nvda-addon\`. A statically linked Lua C module cannot work on newer UE4SS builds (their Lua is modified and UE4SS exports no Lua C API). The source stays here for reference and for a possible standalone speech helper (UniversalSpeech for JAWS/SAPI users) that would serve the same pipe.
+
 `speech_bridge.dll` is a Lua 5.4 C module that bridges UE4SS Lua to screen readers via UniversalSpeech.
 
 ## Prerequisites

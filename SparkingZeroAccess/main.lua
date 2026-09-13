@@ -3,8 +3,8 @@
     Phase 2: Live menu reader
 
     Uses targeted polling on known interactive widget classes.
-    IsValid() guards all UObject access. RegisterLoadMapPostHook
-    handles screen transitions. Watchdog restarts dead loops.
+    All polling runs on the game thread (game_thread.lua). IsValid()
+    guards cached refs; LoadMap hooks pause polling during map loads.
 
     Reader starts automatically on game launch.
 ]]
@@ -17,6 +17,8 @@ local TryGetProperty = H.TryGetProperty
 local IsValidRef = H.IsValidRef
 local GetWidgetName = H.GetWidgetName
 local GetClassName = H.GetClassName
+
+local GT = require("game_thread")
 
 local Speech = require("speech")
 local Speak = Speech.Speak
@@ -342,7 +344,7 @@ local function OnWidgetFocused(widget)
 
         -- Announce context + guide bar shortcuts on first entry or side switch
         if firstEntry then
-            -- Request hold button captions from game thread (async)
+            -- Cache hold button captions for the guide bar read below
             pcall(TeamOV.RequestHoldButtonCaptions)
 
             local playerLabel = side or "Player 1"
@@ -354,8 +356,8 @@ local function OnWidgetFocused(widget)
             end
             SpeakQueued(playerLabel .. ", Team Overview" .. dpInfo)
 
-            -- Delay guide bar read slightly to let game thread resolve hold captions
-            ExecuteWithDelay(100, function()
+            -- Read the guide bar slightly later, after the announcements above
+            GT.After(100, "Team guide bar", function()
                 local ok, shortcuts = pcall(TeamOV.ReadGuideBar)
                 if ok and shortcuts and #shortcuts > 0 then
                     for _, sc in ipairs(shortcuts) do
@@ -524,7 +526,9 @@ local function OnWidgetFocused(widget)
             end
             -- Queue button label after a delay so the body text has time to be read
             local dialogWidget = widget
-            ExecuteWithDelay(1500, function()
+            GT.After(1500, "Dialog button label", function()
+                -- The dialog may have closed and been destroyed in the meantime
+                if Trackers.IsInTransition() or not IsValidRef(dialogWidget) then return end
                 local label = WR.GetSpokenLabel(dialogWidget)
                 lastSpokenLabel = label
                 SpeakQueued(label)
@@ -694,14 +698,17 @@ local function PollFocus()
         end
     end
 
-    -- Slow path: single FindAllOf("UserWidget") scan.
-    -- Throttle: after 6 consecutive empty scans (~100ms) drop to 1-in-6 cadence
-    -- so we don't burn 60Hz GUObjectArray walks on screens that genuinely have
-    -- no focusable widget (cutscene fades, animations, brief dialog gaps).
-    -- Reset to full cadence the moment focus reappears.
-    if focusEmptyScanStreak >= 6 and (focusEmptyScanStreak % 6) ~= 0 then
-        focusEmptyScanStreak = focusEmptyScanStreak + 1
-        return
+    -- Slow path: single FindAllOf("UserWidget") scan, on the game thread.
+    -- Throttle: after 6 consecutive empty scans drop to 1-in-6 cadence, and
+    -- after 60 (over a second: battles, cutscenes) to 1-in-12, so we don't
+    -- burn GUObjectArray walks on screens that genuinely have no focusable
+    -- widget. Reset to full cadence the moment focus reappears.
+    if focusEmptyScanStreak >= 6 then
+        local scanEvery = focusEmptyScanStreak >= 60 and 12 or 6
+        if (focusEmptyScanStreak % scanEvery) ~= 0 then
+            focusEmptyScanStreak = focusEmptyScanStreak + 1
+            return
+        end
     end
 
     local focused = ScanForFocus()
@@ -721,9 +728,6 @@ local function PollFocus()
 end
 
 -- === MAIN LOOP ===
-
-local focusLoopHeartbeat = 0
-local pollLoopHeartbeat = 0
 
 local function ResetStaleState()
     lastFocusedName = nil
@@ -766,85 +770,54 @@ local function IsWorldAlive()
     return false
 end
 
-local function StartFocusLoop()
-    LoopAsync(16, function()
-        if not readerEnabled or Trackers.IsInTransition() or not IsWorldAlive() then
-            focusLoopHeartbeat = os.clock()
-            return false
-        end
-        local ok, err = pcall(PollFocus)
-        if not ok then
-            print("[AE] Focus loop error: " .. tostring(err))
-            ResetStaleState()
-        end
-        focusLoopHeartbeat = os.clock()
-        return false
-    end)
-end
+-- Slow polls: dialogs, screen changes, battle HUD, cutscene text, shop, etc.
+-- They detect state changes on the game's timeline, not user input. One group
+-- runs per game thread tick (about 20 ms apart, so each group roughly every
+-- 160 ms), which spreads their FindAllOf scans across frames instead of
+-- stacking them in one. Polls whose order matters share a group.
+local SLOW_POLL_GROUPS = {
+    { {"PollDialogs", Trackers.PollDialogs} },
+    { {"PollHelpWindows", Trackers.PollHelpWindows} },
+    { {"PollScreenChanges", Trackers.PollScreenChanges} },
+    { {"PollRoom", Trackers.PollRoom} },
+    -- Popups/Episode Map first, so story node polling sees fresh overlay state
+    { {"EpisodeMap.Poll", function() EpisodeMap.Poll(EpisodeBattle.IsStoryMapActive()) end},
+      {"PollStoryMap", EpisodeBattle.PollStoryMap} },
+    { {"PollCutsceneSkip", EpisodeBattle.PollCutsceneSkip},
+      {"PollCutsceneText", EpisodeBattle.PollCutsceneText} },
+    { {"PollHUD", function() Battle.PollHUD(Speak, SpeakQueued) end},
+      {"PollResult", function() Battle.PollResult(Speak, SpeakQueued) end} },
+    { {"PollShopCategory", Shop.PollCategory} },
+}
+local slowPollIndex = 0
 
-local function StartPollLoop()
-    -- Slow loop: dialogs, screen changes, battle HUD, cutscene text, shop categories, etc.
-    -- These detect state changes on the game's timeline, not on user input, so 100ms
-    -- is more than tight enough for announcements (HP thresholds, integer-second timer,
-    -- dialog appearance) without burning 60Hz of FindAllOf/FindFirstOf scans.
-    -- Focus tracking is on a separate 16ms loop for screen-reader responsiveness.
-    LoopAsync(100, function()
-        if not readerEnabled or Trackers.IsInTransition() or not IsWorldAlive() then
-            pollLoopHeartbeat = os.clock()
-            return false
-        end
-        local ok, err = pcall(Trackers.PollDialogs)
-        if not ok then print("[AE] PollDialogs error: " .. tostring(err)) end
-        local ok2, err2 = pcall(Trackers.PollHelpWindows)
-        if not ok2 then print("[AE] PollHelpWindows error: " .. tostring(err2)) end
-        local ok3, err3 = pcall(Trackers.PollScreenChanges)
-        if not ok3 then print("[AE] PollScreenChanges error: " .. tostring(err3)) end
-        -- PollIntro removed (investigating retry crash)
-        local ok6, err6 = pcall(Trackers.PollRoom)
-        if not ok6 then print("[AE] PollRoom error: " .. tostring(err6)) end
-        -- Popups/Episode Map first, so story node polling sees fresh overlay state
-        local ok7m, err7m = pcall(EpisodeMap.Poll, EpisodeBattle.IsStoryMapActive())
-        if not ok7m then print("[AE] EpisodeMap.Poll error: " .. tostring(err7m)) end
-        local ok7, err7 = pcall(EpisodeBattle.PollStoryMap)
-        if not ok7 then print("[AE] PollStoryMap error: " .. tostring(err7)) end
-        local ok8, err8 = pcall(EpisodeBattle.PollCutsceneSkip)
-        if not ok8 then print("[AE] PollCutsceneSkip error: " .. tostring(err8)) end
-        local ok9, err9 = pcall(EpisodeBattle.PollCutsceneText)
-        if not ok9 then print("[AE] PollCutsceneText error: " .. tostring(err9)) end
-        local ok5, err5 = pcall(Battle.PollHUD, Speak, SpeakQueued)
-        if not ok5 then print("[AE] PollHUD error: " .. tostring(err5)) end
-        local ok5r, err5r = pcall(Battle.PollResult, Speak, SpeakQueued)
-        if not ok5r then print("[AE] PollResult error: " .. tostring(err5r)) end
-        local ok10, err10 = pcall(Shop.PollCategory)
-        if not ok10 then print("[AE] PollShopCategory error: " .. tostring(err10)) end
-        pollLoopHeartbeat = os.clock()
+-- One reader tick on the game thread: focus first (screen reader
+-- responsiveness), then the next slow poll group.
+local function ReaderTick()
+    if not readerEnabled or Trackers.IsInTransition() or not IsWorldAlive() then
         return false
-    end)
+    end
+
+    local ok = GT.Measure("PollFocus", PollFocus)
+    if not ok then
+        ResetStaleState()
+    end
+
+    -- PollFocus may have started a transition cooldown
+    if Trackers.IsInTransition() then
+        return false
+    end
+
+    slowPollIndex = slowPollIndex % #SLOW_POLL_GROUPS + 1
+    for _, poll in ipairs(SLOW_POLL_GROUPS[slowPollIndex]) do
+        GT.Measure(poll[1], poll[2])
+    end
+    return false
 end
 
 local function StartReader()
-    StartFocusLoop()
-    StartPollLoop()
-
-    -- Watchdog: detects dead loops and restarts them.
-    -- No UObject access — survives native crashes.
-    LoopAsync(2000, function()
-        if not readerEnabled then return false end
-        local now = os.clock()
-        local focusDead = (now - focusLoopHeartbeat) > 1.5
-        local pollDead = (now - pollLoopHeartbeat) > 1.5
-
-        if focusDead or pollDead then
-            print("[AE] Watchdog: loops died (focus=" .. tostring(focusDead)
-                .. " poll=" .. tostring(pollDead) .. "), restarting")
-            ResetStaleState()
-            if focusDead then StartFocusLoop() end
-            if pollDead then StartPollLoop() end
-        end
-        return false
-    end)
-
-    print("[AE] Reader loops started (with watchdog)")
+    GT.Every("Reader", 0, ReaderTick)
+    print("[AE] Reader registered on the game thread")
 end
 
 -- === DEBUG TOOLS (remove this block to disable) ===
@@ -863,20 +836,17 @@ Trackers.Init(Speak, SpeakQueued)
 EpisodeBattle.Init(Speak, SpeakQueued)
 EpisodeMap.Init(Speak, SpeakQueued)
 Shop.Init(Speak, SpeakQueued)
-TeamOV.InitHook()
 Battle.Init()
 Battle.SetResetCallback(function()
     print("[AE] Result screen reset triggered")
     ResetStaleState()
     SkillList.Reset()
-    TeamOV.ClearCapturedName()
     Trackers.ArmTransitionCooldown(0.8)
 end)
 
 -- F2: battle HUD announcements on/off (not saved; on at every launch).
--- Key bind callbacks run on the UE4SS event loop thread: no UObject access here.
 -- UE4SS key binds don't consume the key, so the game still receives F2.
-RegisterKeyBind(Key.F2, function()
+GT.OnKey(Key.F2, "F2 battle announcements", function()
     local on = Battle.ToggleHudAnnouncements()
     Speak(on and "Battle announcements on" or "Battle announcements off", true)
 end)
@@ -899,7 +869,6 @@ RegisterLoadMapPostHook(function(engine, world)
     ResetStaleState()
     SkillList.Reset()
     Battle.Reset()
-    TeamOV.ClearCapturedName()
     EpisodeBattle.FullReset()  -- full reset on map change (story map too)
     EpisodeMap.Reset()
     Trackers.ArmTransitionCooldown(0.8)
@@ -911,3 +880,6 @@ if Speech.IsLoaded() then
 else
     print("[AE] Speech not available.")
 end
+
+-- Single game thread tick: reader, delayed callbacks, debug keys and loops
+GT.Start()

@@ -13,6 +13,8 @@ Critical for preventing crashes during map reloads (retry, return to menu).
 
 ## Async Loops
 
+The mod no longer calls these directly: `game_thread.lua` owns scheduling and everything else runs inside its game thread tick (see "Experimental UE4SS build" below).
+
 - `LoopAsync(delayMs, callback)` — runs callback every delayMs milliseconds on a separate Lua thread (NOT the game thread). Callback returns `false` to continue, `true` to stop the loop. Does NOT automatically stop during map transitions. All UObject access from within LoopAsync should be guarded by a transition flag or wrapped in ExecuteInGameThread.
 - `ExecuteInGameThread(callback)` — queues a callback to run on the game thread. Use for UObject access that must happen on the game thread (e.g. reading TextBlock text that fails from async context).
 - `ExecuteWithDelay(delayMs, callback)` — one-shot delayed execution on the mod's async thread, the same thread as LoopAsync. NOT the game thread (verified in v3.0.1 LuaMod.cpp).
@@ -31,10 +33,18 @@ Note: LoopAsync is deprecated in UE4SS dev builds. Replacement is `LoopInGameThr
 - `FindAllOf` returns nil when nothing is found; `FindFirstOf` returns an object wrapper (check `IsValid`)
 - Crash dumps from the World Tournament crash and all fix attempts: branch experiment/game-thread-registry
 
-### Experimental UE4SS builds (checked 2026-09-12, not usable yet)
+### Experimental UE4SS build (in use since 2026-09-12, UE4SS_v3.0.1-1133-gb4cefa18)
 
 - Adds `LoopInGameThreadWithDelay`, `ExecuteInGameThreadWithDelay`, `ExecuteInGameThreadAfterFrames`, `IsInGameThread`, engine tick scheduling, NotifyOnNewObject callbacks queued to the game thread, FUObjectHashTables lookups
-- Its bundled Lua 5.4.7 is modified (`lua_lock` → `LuaLock`), and UE4SS exports no Lua C API, so `speech_bridge.dll` (static vanilla Lua) makes the game close at startup
+- Its bundled Lua 5.4.7 is modified (`lua_lock` → `LuaLock`), and UE4SS exports no Lua C API, so a Lua C module (the old `speech_bridge.dll`) makes the game close at startup. Speech therefore goes over a named pipe (`speech.lua` → NVDA add-on)
+- The mod's `game_thread.lua` uses `LoopInGameThreadWithDelay(16, Tick)` when present and falls back to the 3.0.1 timer otherwise. Nothing outside game_thread.lua may call `LoopAsync`, `ExecuteWithDelay`, `ExecuteInGameThread` or `RegisterKeyBind` (`.luacheckrc` enforces it); use `GT.Every`, `GT.After`, `GT.OnKey`
+- Installed with `helpers\Switch-UE4SS.ps1 -Build experimental`: `UE4SS.dll`, default mods and settings from the experimental zip, 3.0.1 `dwmapi.dll` proxy kept (flat Win64 layout; the experimental proxy expects a `ue4ss\` subfolder and is untested here)
+
+### Transition hooks in this game (verified from UE4SS.log, 2026-09-12)
+
+- `RegisterLoadMapPreHook` / `RegisterLoadMapPostHook` fire once at startup and never again: battle maps and menus load through seamless travel or streaming, not `UEngine::LoadMap`
+- `RegisterHook("/Script/Engine.PlayerController:ClientRestart", ...)` fires on every world change (new PlayerController), including the World Tournament transition that used to crash. Candidate for pausing or resetting state on transitions
+- The `UStruct::SuperStruct = 0x40` line in the member offsets dump identified the crash: the object walk called IsChildOf on a null class pointer of an object being destroyed
 
 ## UObject Lookup
 

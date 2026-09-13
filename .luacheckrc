@@ -1,4 +1,4 @@
--- luacheck config for SparkingZeroAccess (UE4SS v3.0.1, Lua 5.4)
+-- luacheck config for SparkingZeroAccess (UE4SS experimental / 3.0.1, Lua 5.4)
 -- Run via: powershell -ExecutionPolicy Bypass -File helpers\Check-Lua.ps1
 
 std = "lua54"
@@ -12,10 +12,12 @@ read_globals = {
     -- Object lookup
     "FindAllOf", "FindFirstOf", "StaticFindObject", "ForEachUObject",
     "NotifyOnNewObject", "StaticConstructObject", "CreateInvalidObject",
-    -- Scheduling / threading
-    "LoopAsync", "ExecuteWithDelay", "ExecuteInGameThread", "ExecuteAsync",
+    -- Scheduling / threading and RegisterKeyBind: NOT listed here on purpose.
+    -- Their callbacks run off the game thread (see game_thread.lua), so only
+    -- game_thread.lua may call them. Everything else uses GT.Every / GT.After /
+    -- GT.OnKey. Using them elsewhere fails the check (W113).
     -- Input
-    "RegisterKeyBind", "IsKeyBindRegistered", "Key", "ModifierKey",
+    "IsKeyBindRegistered", "Key", "ModifierKey",
     -- Hooks
     "RegisterHook", "UnregisterHook",
     "RegisterLoadMapPreHook", "RegisterLoadMapPostHook",
@@ -26,3 +28,7 @@ read_globals = {
 }
 
 exclude_files = { "build/**", "speech_bridge/**" }
+
+files["**/game_thread.lua"] = {
+    read_globals = { "LoopAsync", "ExecuteInGameThread", "RegisterKeyBind", "LoopInGameThreadWithDelay" },
+}

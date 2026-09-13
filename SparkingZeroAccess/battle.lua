@@ -330,7 +330,7 @@ function Battle.ToggleHudAnnouncements()
 end
 
 --- Poll battle HUD values and announce significant changes.
---- Called from the 100ms poll loop.
+--- Called from the slow poll groups on the game thread.
 function Battle.PollHUD(Speak, SpeakQueued)
     if not _hudAnnouncementsOn then
         Speak, SpeakQueued = Silent, Silent

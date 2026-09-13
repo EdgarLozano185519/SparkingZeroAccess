@@ -30,6 +30,10 @@ nul
 # Local dev tools (luacheck.exe, see helpers\Check-Lua.ps1)
 tools/
 
+# Python caches (experiments\pipe_server_stub.py imports the NVDA add-on)
+__pycache__/
+*.pyc
+
 # Build artifacts
 *.o
 *.a

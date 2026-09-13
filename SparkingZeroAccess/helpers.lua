@@ -49,9 +49,9 @@ function Helpers.GetClassName(obj)
     return fullName:match("^(.-)%s") or fullName
 end
 
--- Cached singleton lookup. With bUseUObjectArrayCache=false every FindFirstOf
--- is a full GUObjectArray walk, so callers that hit the same singleton every
--- tick (PollScreenChanges, PollRoom, etc.) should route through here.
+-- Cached singleton lookup: keeps the last live result and retries misses at
+-- most every 500ms, so callers that hit the same singleton every tick
+-- (PollScreenChanges, PollRoom, etc.) stay cheap.
 -- Positive results are revalidated with IsValidRef; negative results are
 -- throttled to a 500ms retry window.
 local _firstOfCache = {}      -- typeName -> live UObject ref

@@ -31,6 +31,27 @@ Requirements:
 - Lua 5.4: `winget install DEVCOM.Lua` (the script also finds it in `%LOCALAPPDATA%\Programs\Lua\bin`)
 - `tools\luacheck.exe` from the [luacheck releases](https://github.com/lunarmodules/luacheck/releases). The `tools/` folder is not in git.
 
+## Switch-UE4SS.ps1
+
+Installs the experimental UE4SS build or restores 3.0.1 in the game, without touching `mods.txt` or the mod folder. Refuses to run while the game is running.
+
+```
+powershell -ExecutionPolicy Bypass -File helpers\Switch-UE4SS.ps1 -Build experimental
+powershell -ExecutionPolicy Bypass -File helpers\Switch-UE4SS.ps1 -Build stable
+powershell -ExecutionPolicy Bypass -File helpers\Switch-UE4SS.ps1 -Status
+```
+
+- `experimental` copies `UE4SS.dll` and the default mods from the newest `build\stage\ue4ss-experimental-*` folder (the extracted experimental zip) and writes `UE4SS-settings.ini` from that build's template with the mod's settings. The 3.0.1 `dwmapi.dll` proxy stays; it loads `UE4SS.dll` from the same folder.
+- `stable` restores `dwmapi.dll`, `UE4SS.dll`, the settings, and the default mods from `build\backup\ue4ss-3.0.1`.
+
+## Build-NvdaAddon.ps1
+
+Packages `nvda-addon\` into `build\output\SparkingZeroAccess-<version>.nvda-addon`, with the version from `VERSION`. Install it by pressing Enter on the file with NVDA running, then restart NVDA.
+
+```
+powershell -ExecutionPolicy Bypass -File helpers\Build-NvdaAddon.ps1
+```
+
 ## Update-CharaNames.py
 
 Pulls character texture IDs and names from the [community Google Sheet](https://docs.google.com/spreadsheets/d/177M1Uro7EtHebWKhYr8-P4D62jLuhEl7JLCVHirWFbE) and generates `SparkingZeroAccess/chara_names.lua` — the lookup table that maps texture IDs to display names and DP costs.

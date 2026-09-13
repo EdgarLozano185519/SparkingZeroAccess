@@ -12,6 +12,7 @@
         F8 = Trace marker (numbered, works with trace on or off)
 
     All dumps go to AE_debug/ folder in the Win64 directory.
+    Key handlers and loops run on the game thread (game_thread.lua).
 ]]
 
 local DebugTools = {}
@@ -23,6 +24,7 @@ local TryCall = H.TryCall
 local TryGetProperty = H.TryGetProperty
 local GetWidgetName = H.GetWidgetName
 local GetClassName = H.GetClassName
+local GT = require("game_thread")
 
 local DUMP_DIR = "AE_debug"
 
@@ -209,6 +211,8 @@ local function BuildDumpEntry()
     return table.concat(lines, "\n")
 end
 
+local _dumpTask = nil
+
 local function StartDumpLoop()
     _dumpActive = true
     _lastDumpFocus = nil
@@ -216,7 +220,9 @@ local function StartDumpLoop()
 
     AppendDump("debug_dump.txt", "\n=== Dump Started " .. os.date("%Y-%m-%d %H:%M:%S") .. " ===\n\n")
 
-    LoopAsync(250, function()
+    -- A quick off/on toggle must not leave two dump loops running
+    GT.Cancel(_dumpTask)
+    _dumpTask = GT.Every("DebugDump", 250, function()
         if not _dumpActive then return true end  -- stop loop
         local ok, entry = pcall(BuildDumpEntry)
         if ok and entry then
@@ -1716,7 +1722,7 @@ local function StartTrace()
     _camPrev, _camLogged = nil, nil
     AppendDump("story_trace.txt", "\n===== Trace started " .. os.date("%Y-%m-%d %H:%M:%S") .. " =====\n")
 
-    LoopAsync(100, function()
+    GT.Every("StoryTrace", 100, function()
         if not _traceActive or gen ~= _traceGen then return true end  -- stop loop
         local ok, err = pcall(TraceTick)
         if not ok and tostring(err) ~= _traceLastError then
@@ -1744,7 +1750,7 @@ function DebugTools.Init(SpeakFn)
     end
 
     -- F5: Toggle continuous debug dump
-    RegisterKeyBind(Key.F5, function()
+    GT.OnKey(Key.F5, "F5 debug dump", function()
         if _dumpActive then
             StopDumpLoop()
             if SpeakFn then SpeakFn("Debug dump off", true) end
@@ -1757,14 +1763,14 @@ function DebugTools.Init(SpeakFn)
     end)
 
     -- F4: Character select dump
-    RegisterKeyBind(Key.F4, function()
+    GT.OnKey(Key.F4, "F4 chara select dump", function()
         if SpeakFn then SpeakFn("Inspecting character select...", true) end
         pcall(DumpCharaSelectInfo)
         if SpeakFn then SpeakFn("Character select dump complete", true) end
     end)
 
     -- F3: Battle state dump
-    RegisterKeyBind(Key.F3, function()
+    GT.OnKey(Key.F3, "F3 battle dump", function()
         if SpeakFn then SpeakFn("Battle dump", true) end
         local ok, err = pcall(DumpBattleGameState)
         if not ok then
@@ -1776,7 +1782,7 @@ function DebugTools.Init(SpeakFn)
     end)
 
     -- F6: Story map structure dump
-    RegisterKeyBind(Key.F6, function()
+    GT.OnKey(Key.F6, "F6 story map dump", function()
         if SpeakFn then SpeakFn("Story map dump", true) end
         local ok, result = pcall(DumpStoryMap)
         if not ok then
@@ -1802,7 +1808,7 @@ function DebugTools.Init(SpeakFn)
     end)
 
     -- F7: Toggle story trace
-    RegisterKeyBind(Key.F7, function()
+    GT.OnKey(Key.F7, "F7 story trace", function()
         if _traceActive then
             _traceActive = false
             TraceWrite("===== Trace stopped =====")
@@ -1816,7 +1822,7 @@ function DebugTools.Init(SpeakFn)
     end)
 
     -- F8: Numbered marker in the trace
-    RegisterKeyBind(Key.F8, function()
+    GT.OnKey(Key.F8, "F8 trace marker", function()
         _traceMarker = _traceMarker + 1
         TraceWrite("########## MARKER " .. _traceMarker .. " ##########")
         print("[AE-DBG] Trace marker " .. _traceMarker)

@@ -11,17 +11,45 @@
 
 ## Setup Status
 - [x] Game installed and first-run complete
-- [x] UE4SS v3.0.1 (dev) installed in SparkingZERO\Binaries\Win64
+- [x] UE4SS: experimental build UE4SS_v3.0.1-1133-gb4cefa18 installed since 2026-09-12 (helpers\Switch-UE4SS.ps1; 3.0.1 backup in build\backup\ue4ss-3.0.1). UNTESTED with the pipe speech mod
 - [x] UTOC Signature Bypass installed (dsound.dll + plugins\DBSparkingZeroUTOCBypass.asi)
 - [x] UE4SS settings configured (bUseUObjectArrayCache=false, GraphicsAPI=dx11)
 - [ ] Hot reload — tried 2026-09-12, Ctrl+R froze game + mod. Disabled again (EnableHotReloadSystem=0). Likely cause: LoopAsync loops / native hooks / speech DLL not surviving mod restart. Restart game after deploys
 - **Controller:** user plays with a DualShock 4
-- [x] UniversalSpeech.dll + nvdaControllerClient.dll + ZDSRAPI.dll deployed
-- [x] speech_bridge.dll (Lua C module) compiled and deployed
+- [x] Speech: named pipe to the NVDA add-on (nvda-addon\, installed in %APPDATA%\nvda\addons\SparkingZeroAccess) since 2026-09-12. speech_bridge.dll + UniversalSpeech/NVDA client/ZDSR DLLs retired. Offline pipe test passes; UNTESTED in game
 - [x] SparkingZeroAccess Lua mod created and registered in mods.txt
-- [x] Speech output confirmed working (F9 test, NVDA spoke text)
 - [x] Inno Setup installer replaces AccessForge (2026-09-12) — see "Distribution / Installer"
 - [x] Lua dev tooling (2026-09-12): Lua 5.4.6 (winget DEVCOM.Lua, luac -p) + tools\luacheck.exe 1.2.0 (gitignored) + .luacheckrc + helpers\Check-Lua.ps1. Deploy-Mod.ps1 runs the check first. First run found: battle.lua Battle.Reset() cleared old undeclared enemy vars instead of _enemyState, so opponent HP/KI state leaked into the next battle (fixed: _enemyState = {}; UNTESTED in battle), and allTB/allRTB scope bug in F5 dump (fixed). 28 non-blocking warnings remain (unused vars/imports, shadowing) — cleanup candidate
+
+## Session Handoff (2026-09-12, night) — Pipe Speech + Game Thread on Experimental UE4SS (UNTESTED)
+
+Branch: `feature/pipe-speech-game-thread` (not merged into main until the in-game test passes). Everything below is deployed to the game and to NVDA already; nothing has been run in the game yet.
+
+What changed:
+- Speech: speech_bridge.dll and the UniversalSpeech/NVDA client/ZDSR DLLs are gone from the mod. `speech.lua` writes one line per announcement to the named pipe `\\.\pipe\SparkingZeroAccess` with plain Lua `io.open` (`!text` = interrupt, `+text` = queue, UTF-8). Reconnects every 3 s when the server is missing, once immediately on a failed write, otherwise drops and counts (logged)
+- NVDA add-on `nvda-addon\` (manifest.ini + globalPlugins\sparkingZeroAccess.py): ctypes named pipe server thread, speaks through queueHandler + speech.cancelSpeech + ui.message. Has an unbound "Reports whether the Sparking Zero Access game mod is connected" script (Input Gestures, category "Sparking Zero Access"). Installed copy: `%APPDATA%\nvda\addons\SparkingZeroAccess` (copied there directly, NVDA 2026.2). Package: `helpers\Build-NvdaAddon.ps1` → `build\output\SparkingZeroAccess-1.0.1.nvda-addon`
+- Game thread: `game_thread.lua` from branch experiment/game-thread-registry (GT.Every / GT.After / GT.OnKey, timing logs). main.lua: one reader tick (focus every tick, slow polls in 8 rotating groups), no LoopAsync loops or watchdog, F2 through GT.OnKey; debug_tools F3–F8 and its loops through GT; poll_trackers/main delays through GT.After; team_overview reads hold captions directly (no ExecuteInGameThread, SetText hook removed). The objects.lua registry from that branch was NOT taken (reverse-migrated back to plain FindAllOf/FindFirstOf; on experimental UE4SS lookups use hash tables)
+- UE4SS: experimental build UE4SS_v3.0.1-1133-gb4cefa18 installed in the game with `helpers\Switch-UE4SS.ps1 -Build experimental` (UE4SS.dll + default mods + settings from build\stage\ue4ss-experimental-20260912-223014, 3.0.1 dwmapi.dll proxy kept, mods.txt untouched). `-Build stable` restores 3.0.1 from build\backup
+- luacheck: LoopAsync/ExecuteWithDelay/ExecuteInGameThread/RegisterKeyBind only allowed in game_thread.lua
+- Offline tests pass: experiments\test_game_thread.lua, test_game_thread_native.lua, Test-SpeechPipe.ps1 (speech.lua ↔ the add-on's real server code with NVDA stubbed)
+- Docs updated: README, CLAUDE.md, docs/known-issues.md, docs/ue4ss-lua-api-reference.md, helpers/README.md, experiments/README.md, THIRD-PARTY-NOTICES.txt (only UE4SS + bypass left), speech_bridge/README.md (retired)
+
+Test plan (user):
+1. Restart NVDA (NVDA+Q, Restart) so the add-on loads. Optional: Tools → Add-on store → Installed add-ons should list "Sparking Zero Access speech"
+2. Start the game. Expect the usual startup dialogs and "Press confirm to start". If silent: NVDA log (NVDA+F1) should have "Sparking Zero Access: pipe server started"; UE4SS.log should have "[AE] Speech pipe connected" and "[AE] Game thread scheduler started (LoopInGameThreadWithDelay)"
+3. Title → main menu a few times, a battle (F2 off/on), the result screen, then World Tournament (the crash case), story map, shop. Note any stutter or slower menu reading compared with before
+4. Afterwards keep UE4SS.log: lines to look at are "[AE] Slow game thread task", "[AE] Game thread 60s:" summaries, and any "[AE] ... error"
+
+If it fails:
+- Game closes at startup or no [AE] lines: `helpers\Switch-UE4SS.ps1 -Build stable` (the mod also runs on 3.0.1 through LoopAsync + ExecuteInGameThread, slowly), or full revert: `git checkout main`, `helpers\Deploy-Mod.ps1`, `Switch-UE4SS.ps1 -Build stable`
+- NVDA misbehaves: delete `%APPDATA%\nvda\addons\SparkingZeroAccess` and restart NVDA
+
+Open follow-ups after a successful test:
+1. Merge the branch, bump VERSION (1.1.0), tag
+2. Installer: ship the experimental UE4SS (pin the zip in deps\, it is a rolling GitHub asset; keep the tested flat layout with the 3.0.1 dwmapi.dll or test the experimental proxy with its `ue4ss\` subfolder), build the .nvda-addon in the release workflow
+3. Standalone pipe speech helper (C#/.NET Framework with csc.exe, or C) using UniversalSpeech for JAWS/SAPI users; it would serve the same pipe when NVDA's add-on is not running
+4. Transition signal: hook PlayerController:ClientRestart to reset state on world changes (LoadMap hooks never fire in this game)
+5. Story map node status, luacheck warning cleanup (still 28)
 
 ## Session Handoff (2026-09-12, late) — World Tournament Crash Investigation + F2 Toggle
 
@@ -42,6 +70,14 @@ Test results (user, 2026-09-12, restored build):
 - [ ] F2 back on: new gauge changes announced again (not tried yet) — ask when continuing
 - [ ] F2 in menus: the game does nothing unexpected (not confirmed) — ask when continuing
 - World Tournament still crashes the restored build (fatal error). Dump crash_2026_09_13_03_52_46.dmp: ACCESS_VIOLATION reading 0x40 at UE4SS.dll+0x4BDDAE on the mod's LoopAsync thread (thread entry UE4SS.dll+0x39528F), the same crash address as the original 2026-09-13 00:38 dump. It came 23 s after the result screen was read (log 03:52:23, dump 03:52:46 UTC)
+
+Crash findings (2026-09-12, follow-up session, read-only analysis):
+- Dump crash_2026_09_13_03_52_46: rax=0x40, rdi=0, AV reading address 0x40. UE4SS.log offsets: UStruct::SuperStruct = 0x40. So the async FindAllOf/FindFirstOf walk called IsA/IsChildOf on an object whose ClassPrivate was already null (object being destroyed). Same address in all readable dumps; faulting thread root UE4SS.dll+0x39528F = a Lua mod async thread (7 such threads = 7 Lua mods)
+- The LoadMap guard never fires in this game: UE4SS.log has "Map loaded, resetting state" once (startup) and never "Map load starting", although the battle loaded /Game/SS/Maps/Korat_P and the crash transition happened. The game must use seamless/level-streaming transitions, so RegisterLoadMapPreHook/PostHook give no protection at all
+- The crash second (03:52:46 UTC) is exactly when CheatManagerEnabler's PlayerController:ClientRestart hook fired (new PlayerController = new world). ClientRestart is a usable transition signal on 3.0.1; earlier candidates to test: PlayerController:ClientTravel, RegisterInitGameStatePreHook
+- After the crash the game kept running for 5 min (more ClientRestart lines, no [AE] lines): only the mod's async thread died; the UE crash dialog blocked the process later
+- UE4SS 3.0.1 CppUserModBase has on_update() and on_lua_start(mod_name, lua, main_lua, async_lua, hook_luas), so a C++ mod can register Lua globals in our mod's state (speech without speech_bridge.dll). Visual Studio 2022 is installed; no gcc on PATH any more
+- Alternative speech transport without any C linkage: Lua io.open on a named pipe (\\.\pipe\...) to a small companion speech process or NVDA add-on. Would make the experimental UE4SS build usable (its only failure was speech_bridge.dll)
 
 Next steps (user decides):
 1. World Tournament crash. Options: (a) narrow mitigation on UE4SS 3.0.1: find what opening World Tournament does to widgets (e.g. an F6 dump right before opening it, UE4SS.log timing) and pause polling around that transition; (b) move speech to a UE4SS C++ mod, then switch to a newer UE4SS where the experiment branch's game thread design can work
@@ -444,13 +480,14 @@ Follow-ups:
 - UniversalSpeech reports "JAWS" as detected engine even when NVDA is active (cosmetic, speech works correctly through NVDA)
 - UE4SS GUI debug window disabled (GuiConsoleVisible=0) for accessibility
 - Team slot character names not readable (see investigation notes above)
-- Crash dumps `crash_*.dmp` in the Win64 directory are written by UE4SS's crash handler. The 2026-09-12 dumps ARE mod-related: LoopAsync polling races with widget destruction on screen changes (World Tournament, title screen). Not fixed yet, see "Session Handoff (2026-09-12, late)"
+- Crash dumps `crash_*.dmp` in the Win64 directory are written by UE4SS's crash handler. The 2026-09-12 dumps ARE mod-related: LoopAsync polling races with widget destruction on screen changes (World Tournament, title screen). Fix (all polling on the game thread, experimental UE4SS) deployed 2026-09-12 night, UNTESTED, see "Session Handoff (2026-09-12, night)"
 
 ## Architecture
 - UE4SS Lua mod: SparkingZeroAccess (Mods/SparkingZeroAccess/Scripts/)
-  - main.lua — orchestrator: focus tracking, keybinds, init, RegisterLoadMapPostHook
+  - main.lua — orchestrator: focus tracking, keybinds, init, RegisterLoadMapPostHook; one reader tick on the game thread (focus every tick + rotating slow poll groups)
+  - game_thread.lua — GT.Every / GT.After / GT.OnKey scheduler on the game thread (LoopInGameThreadWithDelay on experimental UE4SS, LoopAsync + ExecuteInGameThread fallback on 3.0.1), slow task and 60 s timing logs
   - helpers.lua — TryCall, TryGetProperty, GetWidgetName, GetClassName, IsValidRef
-  - speech.lua — speech init, Speak/SpeakQueued (applies icon_parser automatically)
+  - speech.lua — Speak/SpeakQueued over the named pipe \\.\pipe\SparkingZeroAccess (applies icon_parser automatically)
   - widget_reader.lua — text reading, widget matching, label resolution, list position
   - poll_trackers.lua — dialog, help window, screen change, room ID/status polling
   - icon_parser.lua — converts RichText icon markup to readable text (full PS/Xbox/keyboard mappings)
@@ -463,11 +500,8 @@ Follow-ups:
   - chara_roster.lua — character roster grid: name reading, skills, teamlist (cached TextBlock refs)
   - debug_tools.lua (F3-F8, loaded via require, remove to disable). F6 story map dump + chart_actors.txt, F7 story trace, F8 marker. Trace records speech via Speech.SetListener
 - Dev tooling: helpers\Check-Lua.ps1 (luac -p + tools\luacheck.exe with .luacheckrc), run automatically by helpers\Deploy-Mod.ps1
-- Speech bridge: speech_bridge.dll (Lua C module, statically links Lua 5.4, dynamically loads UniversalSpeech.dll)
-- Speech library: UniversalSpeech.dll (pre-built 64-bit, supports NVDA/JAWS/SAPI fallback)
-- Build artifacts in: D:\games\DRAGON BALL Sparking! ZERO mod\build\
-- GCC compiler: WinLibs MinGW-w64 (installed via winget)
-- Build command (run from `build/` directory): `gcc -shared -o speech_bridge.dll speech_bridge.c lua-5.4.7/src/liblua54.a -luser32`
+- NVDA add-on: nvda-addon\ (manifest.ini, globalPlugins\sparkingZeroAccess.py: ctypes named pipe server, speaks via ui.message). Build: helpers\Build-NvdaAddon.ps1. Offline test: experiments\Test-SpeechPipe.ps1
+- Retired: speech_bridge.dll (Lua C module + UniversalSpeech). Source kept in speech_bridge\ for a possible standalone JAWS/SAPI pipe helper. No gcc on PATH any more; Visual Studio 2022 is installed
 - Git repo initialized at mod directory (branch: main)
 
 ## Files Modified in Game Directory
@@ -477,4 +511,6 @@ Original manual setup:
 - SparkingZERO\Binaries\Win64\UE4SS-settings.ini (bUseUObjectArrayCache, GraphicsAPI, GuiConsoleVisible)
 - SparkingZERO\Binaries\Win64\Mods\mods.txt (added SparkingZeroAccess)
 - SparkingZERO\Binaries\Win64\Mods\SparkingZeroAccess\ (our mod)
-- SparkingZERO\Binaries\Win64\UniversalSpeech.dll, nvdaControllerClient.dll, ZDSRAPI.dll
+- SparkingZERO\Binaries\Win64\UniversalSpeech.dll, nvdaControllerClient.dll, ZDSRAPI.dll (retired 2026-09-12, no longer deployed)
+
+Outside the game directory (2026-09-12): %APPDATA%\nvda\addons\SparkingZeroAccess (the NVDA add-on), build\stage\ue4ss-experimental-* and build\backup\ue4ss-3.0.1 (UE4SS builds for Switch-UE4SS.ps1)

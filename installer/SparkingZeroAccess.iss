@@ -101,7 +101,7 @@ Source: "{#StageDir}\ue4ss\Mods\mods.txt"; DestDir: "{#Win64Dir}\Mods"; Flags: o
 Source: "{#StageDir}\bypass\dsound.dll"; DestDir: "{#Win64Dir}"; Flags: ignoreversion
 Source: "{#StageDir}\bypass\plugins\*"; DestDir: "{#Win64Dir}\plugins"; Flags: ignoreversion recursesubdirs createallsubdirs
 
-; The mod (speech_bridge.dll loads its DLLs from this same folder)
+; The mod (Lua scripts; speech goes to the NVDA add-on over a named pipe)
 Source: "..\SparkingZeroAccess\*"; DestDir: "{#Win64Dir}\Mods\{#ModName}\Scripts"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\THIRD-PARTY-NOTICES.txt"; DestDir: "{#Win64Dir}\Mods\{#ModName}"; Flags: ignoreversion
 

@@ -9,6 +9,7 @@ local TryCall = H.TryCall
 local IsValidRef = H.IsValidRef
 local GetWidgetName = H.GetWidgetName
 local GetCachedFirstOf = H.GetCachedFirstOf
+local GT = require("game_thread")
 
 local Trackers = {}
 
@@ -236,7 +237,7 @@ function Trackers.PollScreenChanges()
 
         if isVisible and not lastScreenState[typeName] then
             if screen[3] then
-                ExecuteWithDelay(screen[3], function()
+                GT.After(screen[3], "Screen " .. label, function()
                     Speak(label, true)
                     print("[AE] Screen: " .. label .. " (delayed " .. screen[3] .. "ms)")
                 end)
