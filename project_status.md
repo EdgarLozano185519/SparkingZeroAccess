@@ -5,8 +5,8 @@
 - **Engine:** Unreal Engine 5, 64-bit
 - **Game path:** C:\Program Files (x86)\Steam\steamapps\common\DRAGON BALL Sparking! ZERO
 - **Mod framework:** UE4SS v3.0.1 (dev) + UTOC Signature Bypass
-- **Speech library:** UniversalSpeech (via custom Lua C module bridge)
-- **Screen reader:** NVDA (confirmed working)
+- **Speech library:** UniversalSpeech, inside the native speech plugin `Win64\plugins\SparkingZeroSpeech.asi` (named pipe from Lua)
+- **Screen reader:** NVDA and JAWS (both confirmed working; the plugin log names the engine UniversalSpeech picked)
 - **User familiarity:** Knows the game well (menus, mechanics)
 
 ## Setup Status
@@ -23,7 +23,7 @@
 
 ## Session Handoff (2026-09-13, afternoon) — Title screen fix, GC-safe registry, crash catcher
 
-Branch: `feature/pipe-speech-game-thread`, committed. Everything below is deployed to the game (mod + plugin). Verified with 4 scripted launches (helpers\Drive-Game.ps1); NOT yet played by the user.
+Branch: `feature/pipe-speech-game-thread`, merged into `main` on 2026-09-13 (user decision) with VERSION bumped to 1.1.0; not tagged and not pushed, the installer is not rebuilt yet (see Next steps). Everything below is deployed to the game (mod + plugin). Verified with 4 scripted launches (helpers\Drive-Game.ps1); NOT yet played by the user. Docs refreshed and the retired `speech_bridge\` source removed in the same session.
 
 What changed and why:
 - Title screen (the reported bug): objects.lua now serves every widget blueprint class (`WBP_*`) from one `UserWidget` walk (objects indexed by class name), re-walked every 3 s in menus and on request from main.lua when nothing has keyboard focus (0.5 s after a focus loss, then every 2 s, never during transition cooldowns). "Press confirm to start", the title Start button, the main menu buttons, the roster grid and the CPU-level setting are read in the Drive-Game logs. main.lua prints `[AE] Focus: <widget> (<class>)` on every focus change now
@@ -42,7 +42,7 @@ User test plan:
 
 Next steps:
 1. User test above. If a walk crash (UE4SS.dll+0x4BDDAE in the plugin log) recurs during loads: consider pausing all walks while the loading screen widget (`WBP_GRP_Title_CI_Logo_C`) is visible, or retest the experimental UE4SS build with the crash catcher (its hash lookups would remove walks entirely); a UE4SS C++ mod could expose a safe liveness check (`FUObjectDeleteListener`) if ever needed
-2. Installer: rebuild and test (plugin files), bump VERSION to 1.1.0, merge into main, tag
+2. Installer: rebuild (`installer\build.ps1`) and test with the plugin files, then tag v1.1.0 and push main (or run the Release workflow, which builds and publishes)
 3. Older backlog: story map node status, luacheck warnings, pending story map tests from 2026-09-12
 
 ## Session Handoff (2026-09-13) — Native speech plugin + object cache on UE4SS 3.0.1 (superseded by the afternoon handoff above; the title screen FAIL below is fixed)
@@ -138,8 +138,7 @@ Next steps (user decides):
 The older pending tests in the previous handoff below (story map paths, Episode Map, Details popup, F6/F7/F8, battle Reset fix) are still unanswered.
 
 Tools and local files:
-- Crash dump reader: experiments\mdump.py and threadroots.py on branch experiment/game-thread-registry (git show experiment/game-thread-registry:experiments/mdump.py). Python 3 stdlib only; no debugger is installed
-- Branch experiment/game-thread-registry is local only (not pushed)
+- Crash dump reader: experiments\mdump.py and threadroots.py (now in experiments\ on this branch; the experiment branch was deleted on 2026-09-13, its write-up is docs/crash-investigation-2026-09-12.md). Python 3 stdlib only; no debugger is installed
 - Not in git (build\ is ignored): build\backup\ue4ss-3.0.1 (UE4SS 3.0.1 backup: dwmapi.dll, UE4SS.dll, UE4SS-settings.ini, Mods), build\cache\UE4SS_v3.0.1-1133-gb4cefa18.zip (experimental UE4SS, SHA-256 89B7EED47C37D6FF6EAA144A41311A75098279A3454777F4EDD2446CEA1EA7A8), build\stage\ue4ss-experimental-* (extracted copy)
 - VERSION unchanged (1.0.1); F2 is not in a release yet
 
@@ -480,7 +479,7 @@ Files:
 - `installer\build.ps1` — downloads UE4SS_v3.0.1.zip (SHA256 pinned, cached in build\cache), extracts deps\utoc-bypass.zip, patches UE4SS-settings.ini (bUseUObjectArrayCache=false, GraphicsAPI=dx11, GuiConsoleVisible=0), builds `build\output\SparkingZeroAccess-Setup-<ver>.exe` and `SparkingZeroAccess-<ver>-manual.zip` (Win64 layout)
 - `helpers\Deploy-Mod.ps1` — dev deploy (robocopy /MIR into Mods\SparkingZeroAccess\Scripts, retries locked files)
 - `.github\workflows\release.yml` — choco installs Inno Setup, runs build.ps1, uploads exe + manual zip
-- `THIRD-PARTY-NOTICES.txt` — license texts and credits: UE4SS (MIT, Narknon), Lua 5.4.7 (MIT, in speech_bridge.dll), UniversalSpeech (MIT, Quentin Cosendey), NVDA Controller Client (LGPL 2.1), ZDSRAPI.dll, UTOC bypass (DeathChaos). Installed to Mods\SparkingZeroAccess\ and included in the manual zip. Update it when a bundled component changes
+- `THIRD-PARTY-NOTICES.txt` — license texts and credits: UE4SS (MIT, Narknon), UniversalSpeech (MIT, Quentin Cosendey), NVDA Controller Client (LGPL 2.1), ZDSRAPI.dll, UTOC bypass (DeathChaos). Installed to Mods\SparkingZeroAccess\ and included in the manual zip. Update it when a bundled component changes
 
 Installer behavior:
 - Game detection order: Steam uninstall key "Steam App 1790600" InstallLocation (HKLM 64/32) → Steam path (HKCU SteamPath / HKLM32 InstallPath) → each library in libraryfolders.vdf → appmanifest_1790600.acf installdir
@@ -529,16 +528,16 @@ Follow-ups:
 - AppPublisher is "Sparking Zero Access contributors". Change if desired
 
 ## Known Issues
-- UniversalSpeech reports "JAWS" as detected engine even when NVDA is active (cosmetic, speech works correctly through NVDA)
+- UniversalSpeech reports "JAWS" as detected engine when JAWS is running, even if NVDA is the reader in use (cosmetic, speech still arrives)
 - UE4SS GUI debug window disabled (GuiConsoleVisible=0) for accessibility
 - Team slot character names not readable (see investigation notes above)
-- Crash dumps `crash_*.dmp` in the Win64 directory are written by UE4SS's crash handler, but only for crashes on UE4SS's own threads. Game-thread crashes exit silently (no dump, no Windows event). The 2026-09-12 dumps were the async polling race; the World Tournament crash persists on the game-thread build (2026-09-13), see "Session Handoff (2026-09-13)"
+- Crash dumps `crash_*.dmp` in the Win64 directory are written by UE4SS's crash handler, but only for crashes on UE4SS's own threads. Game-thread crashes end with exit code 3 (Unreal's fatal-error exit, no dump from UE4SS, no Windows event); since 2026-09-13 the speech plugin's crash catcher logs them and writes `plugins\AE_crash_*.dmp`. The 2026-09-12 dumps were the async polling race; the two 2026-09-13 dumps were stale cached references after a GC and a walk during asset streaming, see "Session Handoff (2026-09-13, afternoon)"
 
 ## Architecture
 - UE4SS Lua mod: SparkingZeroAccess (Mods/SparkingZeroAccess/Scripts/)
   - main.lua — orchestrator: focus tracking, keybinds, init, RegisterLoadMapPostHook; one reader tick on the game thread (focus every tick + rotating slow poll groups)
   - game_thread.lua — GT.Every / GT.After / GT.OnKey scheduler on the game thread (LoopAsync timer + ExecuteInGameThread on 3.0.1), slow task and 60 s timing logs
-  - objects.lua — per-class cache behind the FindAllOf/FindFirstOf globals (walks: one per tick at most, none in the first 5 s or while battle is busy; FindAllLive for the focus scan)
+  - objects.lua — per-class cache behind the FindAllOf/FindFirstOf globals (walks: one per tick at most, none in the first 5 s or while battle is busy; FindAllLive for the focus scan; WBP_* classes derived from the UserWidget walk; GC sentinel + Objects.OnFlush drop every cached reference after each garbage collection; Objects.BeginTick runs first in every tick via GT.SetTickPrologue)
   - helpers.lua — TryCall, TryGetProperty, GetWidgetName, GetClassName, IsValidRef
   - speech.lua — Speak/SpeakQueued over the named pipe \\.\pipe\SparkingZeroSpeech to the speech plugin (applies icon_parser automatically)
   - widget_reader.lua — text reading, widget matching, label resolution, list position
@@ -553,8 +552,8 @@ Follow-ups:
   - chara_roster.lua — character roster grid: name reading, skills, teamlist (cached TextBlock refs)
   - debug_tools.lua (F3-F8, loaded via require, remove to disable). F6 story map dump + chart_actors.txt, F7 story trace, F8 marker. Trace records speech via Speech.SetListener
 - Dev tooling: helpers\Check-Lua.ps1 (luac -p + tools\luacheck.exe with .luacheckrc), run automatically by helpers\Deploy-Mod.ps1
-- Speech plugin: speech_plugin\SparkingZeroSpeech.c → SparkingZeroSpeech.asi (build.ps1 -Deploy; MSVC 14.44 + Windows SDK 10.0.26100 are installed, no gcc). Named pipe server thread + UniversalSpeech, loaded by the Ultimate ASI Loader from Win64\plugins. Log: plugins\SparkingZeroSpeech.log
-- Retired: speech_bridge.dll (Lua C module). Source kept in speech_bridge\ for reference
+- Speech plugin: speech_plugin\SparkingZeroSpeech.c → SparkingZeroSpeech.asi (build.ps1 -Deploy; MSVC 14.44 + Windows SDK 10.0.26100 are installed, no gcc). Named pipe server thread + UniversalSpeech + crash catcher (vectored exception handler, dbghelp stack walk and minidumps), loaded by the Ultimate ASI Loader from Win64\plugins. Log: plugins\SparkingZeroSpeech.log
+- Retired: speech_bridge.dll (Lua C module, 2026-09-12). Its source folder was removed on 2026-09-13; see git history before commit 7b6b9aa if ever needed
 - Test launches: helpers\Launch-Game.ps1, helpers\Drive-Game.ps1 (Steam launch, log watch, SendKeys)
 - Git repo initialized at mod directory (branch: main)
 

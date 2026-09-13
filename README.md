@@ -98,6 +98,7 @@ Command-line options:
 
 - **No speech in game:** start your screen reader before the game. Then check `SparkingZERO\Binaries\Win64\plugins\SparkingZeroSpeech.log`: it should say "UniversalSpeech loaded", "Pipe server ready" and "Game connected". In `UE4SS.log` in `Win64\`, search for `[AE]`: `[AE] Speech pipe connected` means the mod reached the plugin; `[AE] Speech pipe not available` means the plugin did not load (is `plugins\SparkingZeroSpeech.asi` there, next to `DBSparkingZeroUTOCBypass.asi`?).
 - **The installer can't find the game:** press Browse and select the game folder. It contains `SparkingZERO.exe` and a folder named `SparkingZERO`.
+- **The game closes on its own:** the speech plugin records every crash. `SparkingZERO\Binaries\Win64\plugins\SparkingZeroSpeech.log` ends with an `EXCEPTION` block (code, module and offset, stack) and a `minidump written` line naming `plugins\AE_crash_<date>_<time>.dmp`. Attach both to a bug report. `UE4SS.log` shows what the mod was doing last (`[AE]` lines).
 
 ## Known Issues
 
@@ -109,8 +110,8 @@ Command-line options:
 - Shop: page navigation and the Customize screen aren't read yet
 - Episode Battle: whether a story map episode is cleared or locked isn't read yet
 - Episode Battle: the Episode Map's "main story" and "what if" labels are inferred from the map layout and may be wrong for some sagas
-- Opening World Tournament (offline mode) still crashes the game. Versions up to 1.0.1 crashed from reading the game off its main thread; the current development version reads only on the main thread, but this crash remains and is being investigated
-- Development version: the title screen ("Press confirm to start" and the Start/Quit buttons) may not be read after a fresh start. Known cause, fix pending
+- Opening World Tournament (offline mode) crashed the game in versions up to 1.0.1 and in the first main-thread builds. Two causes were found and fixed on 2026-09-13 (see [docs/known-issues.md](docs/known-issues.md)); a retest of World Tournament is pending. If the game closes, `Win64\plugins\SparkingZeroSpeech.log` and the newest `Win64\plugins\AE_crash_*.dmp` show what happened
+- A rare crash can still happen while the game loads a screen: the mod's object lookups can meet objects the game is still constructing. This is a limitation of UE4SS 3.0.1; the mod keeps lookups rare
 
 ## Development
 
@@ -119,7 +120,7 @@ Command-line options:
 - `SparkingZeroAccess/` — the Lua mod, installed to `Mods\SparkingZeroAccess\Scripts`
   - `main.lua` — orchestrator: focus tracking, keybinds, init
   - `game_thread.lua` — runs all mod work on the game thread: `GT.Every`, `GT.After`, `GT.OnKey`, timing logs
-  - `objects.lua` — cached `FindAllOf` / `FindFirstOf` per class: rare object walks, one per frame at most, none during battle
+  - `objects.lua` — cached `FindAllOf` / `FindFirstOf` per class: rare object walks, one per frame at most, none during battle; detects every garbage collection and drops all cached references (see "SAFETY" in the file)
   - `helpers.lua` — TryCall, TryGetProperty, GetWidgetName, IsValidRef
   - `speech.lua` — Speak and SpeakQueued over the named pipe to the speech plugin
   - `widget_reader.lua` — text reading, widget matching, label resolution
@@ -134,15 +135,14 @@ Command-line options:
   - `chara_names.lua` — texture ID to character name and DP lookup table
   - `skill_list.lua` — skill list overlay reading
   - `debug_tools.lua` — debug dumps and the story trace (F3 to F8)
-- `speech_plugin/` — the speech plugin: `SparkingZeroSpeech.c` (named pipe server + UniversalSpeech, built to `SparkingZeroSpeech.asi` by `build.ps1`) and the screen reader libraries `UniversalSpeech.dll`, `nvdaControllerClient.dll`, `ZDSRAPI.dll`, all installed to `Win64\plugins`
+- `speech_plugin/` — the speech plugin: `SparkingZeroSpeech.c` (named pipe server + UniversalSpeech + crash catcher, built to `SparkingZeroSpeech.asi` by `build.ps1`) and the screen reader libraries `UniversalSpeech.dll`, `nvdaControllerClient.dll`, `ZDSRAPI.dll`, all installed to `Win64\plugins`
 - `experiments/` — offline tests (speech pipe, game thread scheduler) and crash dump readers, see [experiments/README.md](experiments/README.md)
-- `speech_bridge/` — the retired Lua C module for UniversalSpeech, kept for reference, see [speech_bridge/README.md](speech_bridge/README.md)
 - `installer/` — Windows installer
   - `SparkingZeroAccess.iss` — Inno Setup script: game detection, Replace and Uninstall, install and uninstall
   - `build.ps1` — builds the installer and manual zip
 - `helpers/` — development scripts, see [helpers/README.md](helpers/README.md)
 - `deps/utoc-bypass.zip` — UTOC Signature Bypass, bundled into releases
-- `docs/` — modding guide, state management guide, UE4SS API reference, known issues
+- `docs/` — modding guide, state management guide, UE4SS API reference, known issues, the 2026-09-12 crash investigation
 - `.luacheckrc` — luacheck settings, including the globals UE4SS provides
 - `tools/` — local development tools such as `luacheck.exe` (not in git)
 - `THIRD-PARTY-NOTICES.txt` — licenses for bundled components
@@ -151,14 +151,14 @@ Command-line options:
 
 ### How It Works
 
-All of the mod's work runs on the game's main thread: `game_thread.lua` queues a tick about 60 times a second with UE4SS's `ExecuteInGameThread` and runs the focus poll on every tick and the slower polls (dialogs, battle HUD, story map, shop) in rotating groups. Reading game objects from another thread raced with the game freeing them and crashed it, which is why the older `LoopAsync` design was replaced. Because every UE4SS object lookup walks all objects (about 50 ms), `objects.lua` caches the results per class and walks at most one class per frame, never during a battle. When focus moves to a new widget:
+All of the mod's work runs on the game's main thread: `game_thread.lua` queues a tick about 60 times a second with UE4SS's `ExecuteInGameThread` and runs the focus poll on every tick and the slower polls (dialogs, battle HUD, story map, shop) in rotating groups. Reading game objects from another thread raced with the game freeing them and crashed it, which is why the older `LoopAsync` design was replaced. Because every UE4SS object lookup walks all objects (about 50 ms), `objects.lua` caches the results per class and walks at most one class per frame, never during a battle. A cached reference is only safe until the engine's garbage collector frees the object (UE4SS 3.0.1 cannot tell a freed object apart), so the cache keeps a throwaway sentinel object, checks it at the start of every tick, and drops every cached reference in the mod the moment a collection has run. When focus moves to a new widget:
 
 1. **Fast path:** check the `WidgetLabels` table for known widget names
 2. **Screen-specific handlers:** character select, team overview, skill list, room ID input, and others have dedicated handlers
 3. **Generic path:** read widget text through the `caption` property or child TextBlocks
 4. **Slow fallback:** a `FindAllOf("TextBlock")` scan filtered by widget path
 
-Speech goes through a named pipe inside the game process: `speech.lua` opens `\\.\pipe\SparkingZeroSpeech` with Lua's file functions and writes one line per announcement (`!` prefix interrupts, `+` prefix queues). `SparkingZeroSpeech.asi`, a small native plugin loaded by the same ASI loader as the UTOC bypass, owns the pipe and speaks the lines through UniversalSpeech. The Lua mod itself loads no DLLs, so it does not depend on UE4SS's Lua build.
+Speech goes through a named pipe inside the game process: `speech.lua` opens `\\.\pipe\SparkingZeroSpeech` with Lua's file functions and writes one line per announcement (`!` prefix interrupts, `+` prefix queues). `SparkingZeroSpeech.asi`, a small native plugin loaded by the same ASI loader as the UTOC bypass, owns the pipe and speaks the lines through UniversalSpeech. The Lua mod itself loads no DLLs, so it does not depend on UE4SS's Lua build. The plugin also carries a crash catcher: a vectored exception handler that logs any crash in the game process with a stack walk and writes a minidump to `plugins\`, including crashes on the game's main thread that UE4SS's own crash handler never sees.
 
 ### Deploying Changes
 

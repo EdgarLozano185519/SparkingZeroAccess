@@ -31,12 +31,12 @@ Note: LoopAsync is deprecated in UE4SS dev builds. Replacement is `LoopInGameThr
 - All of these share one Lua state, which is not thread-safe
 - `FindAllOf` / `FindFirstOf` with `bUseUObjectArrayCache = false` walk every object: about 45 ms each on this game (measured on the game thread). `bUseUObjectArrayCache = true` did not make them faster
 - `FindAllOf` returns nil when nothing is found; `FindFirstOf` returns an object wrapper (check `IsValid`)
-- Crash dumps from the World Tournament crash and all fix attempts: branch experiment/game-thread-registry
+- Crash dumps: UE4SS writes `Win64\crash_*.dmp` for its own threads, the speech plugin writes `Win64\plugins\AE_crash_*.dmp` for everything else (readers in experiments\). The 2026-09-12 fix attempts are written up in docs/crash-investigation-2026-09-12.md (its branch was deleted)
 
 ### Experimental UE4SS builds (tested 2026-09-12/13, NOT usable on this game)
 
 - They add `LoopInGameThreadWithDelay`, engine tick scheduling, NotifyOnNewObject callbacks queued to the game thread and FUObjectHashTables lookups, and their bundled Lua is modified (`lua_lock` → `LuaLock`, so no Lua C modules)
-- UE4SS_v3.0.1-1133-gb4cefa18 kills the game about 3 s after the mods start even with this mod disabled (no dump, no Windows event). `helpers\Switch-UE4SS.ps1` can install/restore builds for future retests
+- UE4SS_v3.0.1-1133-gb4cefa18 kills the game about 3 s after the mods start even with this mod disabled (no dump, no Windows event; most likely exit code 3 = Unreal's fatal-error exit, seen once on 3.0.1 too). `helpers\Switch-UE4SS.ps1` can install/restore builds; a retest with the plugin's crash catcher would capture the fatal-error text
 - `game_thread.lua` keeps the `LoopInGameThreadWithDelay` path (with a fallback to the timer when it never ticks), but on 3.0.1 the timer + `ExecuteInGameThread` path is what runs. Nothing outside game_thread.lua may call `LoopAsync`, `ExecuteWithDelay`, `ExecuteInGameThread` or `RegisterKeyBind` (`.luacheckrc` enforces it); use `GT.Every`, `GT.After`, `GT.OnKey`
 
 ### Measured on UE4SS 3.0.1, game thread, title screen (2026-09-13)

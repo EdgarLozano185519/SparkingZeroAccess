@@ -1,5 +1,7 @@
 ﻿# Crash Investigation (2026-09-12), from branch experiment/game-thread-registry
 
+History. The branch was deleted on 2026-09-13; its dump readers live in `experiments\` now. The findings that superseded this write-up (UE4SS 3.0.1 `IsValid` semantics, the GC sentinel, walks during asset streaming, the plugin's crash catcher, exit code 3) are in docs/known-issues.md and docs/ue4ss-lua-api-reference.md ("Object lifetime on UE4SS 3.0.1").
+
 Preserved from that branch's project_status.md before the branch was deleted (2026-09-13). Its game_thread.lua, crash dump readers and offline tests were merged into feature/pipe-speech-game-thread; its objects.lua registry (NotifyOnNewObject based) was NOT taken: on UE4SS 3.0.1 those callbacks run Lua on loading threads. Numbers here predate the per-class cache in the current objects.lua.
 
 

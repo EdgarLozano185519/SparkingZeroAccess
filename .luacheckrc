@@ -27,7 +27,7 @@ read_globals = {
     "PropertyTypes", "FName", "FText", "FString",
 }
 
-exclude_files = { "build/**", "speech_bridge/**" }
+exclude_files = { "build/**" }
 
 -- objects.lua captures the real UE4SS lookups; main.lua replaces the globals with the cached versions
 files["**/main.lua"] = {
