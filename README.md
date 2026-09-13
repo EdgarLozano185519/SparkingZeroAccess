@@ -31,6 +31,10 @@ The mod reads the game's menus, character select, battles, story mode, shop, and
 ### Episode Battle (Story Mode)
 - Character select with chapter title and story text
 - Story map: saga, arc, and chapter names, node navigation, and branch conditions
+- Story map paths: announced when you step onto them, with the characters shown and branch conditions
+- Details popup: your team, opponents, clear condition, and rewards
+- Recap popup: saga name and recap text
+- Episode Map: episode title, battle or event, arc, main story or "what if" route, position in the arc, and synopsis
 - Cutscene narration and skip prompts
 
 ### Shop
@@ -101,7 +105,8 @@ Command-line options:
 - Character select: costume and form selection, sort and filter, and team presets aren't read yet
 - Battle: the health bar count and transformation count aren't announced yet
 - Shop: page navigation and the Customize screen aren't read yet
-- Episode Battle: moving between neighboring path nodes on the story map isn't announced
+- Episode Battle: whether a story map episode is cleared or locked isn't read yet
+- Episode Battle: the Episode Map's "main story" and "what if" labels are inferred from the map layout and may be wrong for some sagas
 
 ## Development
 
@@ -115,13 +120,14 @@ Command-line options:
   - `poll_trackers.lua` — dialog, help window, screen change, and room polling
   - `icon_parser.lua` — RichText icon markup to readable text
   - `battle.lua` — battle HUD: HP, KI, Sparking, opponent tracking, match results
-  - `episode_battle.lua` — Episode Battle: character select, story map, cutscenes
+  - `episode_battle.lua` — Episode Battle: character select, story map, path nodes, cutscenes
+  - `episode_map.lua` — Episode Battle popups: Details, Recap, and the Episode Map overlay
   - `shop.lua` — shop: item grid, categories, purchase dialogs
   - `team_overview.lua` — team setup: slot navigation, character names
   - `chara_roster.lua` — character roster: grid names, skills
   - `chara_names.lua` — texture ID to character name and DP lookup table
   - `skill_list.lua` — skill list overlay reading
-  - `debug_tools.lua` — debug dumps (F3 to F5)
+  - `debug_tools.lua` — debug dumps and the story trace (F3 to F8)
   - `speech_bridge.dll` — Lua C module bridging to UniversalSpeech
   - `UniversalSpeech.dll`, `nvdaControllerClient.dll`, `ZDSRAPI.dll` — screen reader libraries
 - `speech_bridge/` — speech bridge source, see [speech_bridge/README.md](speech_bridge/README.md)
@@ -130,7 +136,9 @@ Command-line options:
   - `build.ps1` — builds the installer and manual zip
 - `helpers/` — development scripts, see [helpers/README.md](helpers/README.md)
 - `deps/utoc-bypass.zip` — UTOC Signature Bypass, bundled into releases
-- `docs/` — modding guide, state management guide, UE4SS API reference
+- `docs/` — modding guide, state management guide, UE4SS API reference, known issues
+- `.luacheckrc` — luacheck settings, including the globals UE4SS provides
+- `tools/` — local development tools such as `luacheck.exe` (not in git)
 - `THIRD-PARTY-NOTICES.txt` — licenses for bundled components
 - `VERSION` — current release version
 - `project_status.md` — development tracking, widget structures, API notes
@@ -153,6 +161,22 @@ Run the installer once so UE4SS and the bypass are in place. After changing file
 ```
 powershell -ExecutionPolicy Bypass -File helpers\Deploy-Mod.ps1
 ```
+
+Deploying runs the Lua check first and copies nothing if it fails. Pass `-SkipCheck` to deploy anyway. Restart the game afterwards; UE4SS hot reload (Ctrl+R) freezes this game.
+
+### Checking Lua Code
+
+The check catches syntax errors and misspelled or undeclared variables before they cost a game restart:
+
+```
+powershell -ExecutionPolicy Bypass -File helpers\Check-Lua.ps1
+```
+
+It needs:
+- Lua 5.4 for `luac`: `winget install DEVCOM.Lua`
+- `luacheck.exe` from the [luacheck releases](https://github.com/lunarmodules/luacheck/releases), saved as `tools\luacheck.exe`
+
+Syntax errors and global variable warnings fail the check. Other warnings are listed; `-Strict` makes them fail too. When the mod starts using another UE4SS global function, add it to `read_globals` in `.luacheckrc`.
 
 ### Building the Installer
 
@@ -179,6 +203,11 @@ Press **F5** in game to toggle continuous debug dumping. Dumps are written to `S
 Other dumps:
 - **F3** — battle state and gauge values
 - **F4** — character select texture IDs
+- **F6** — story map structure, one entry per press in `story_map.txt`: every visible widget tree with visibility, positions, switcher pages, textures, text, and class properties. The first press on the story map also writes `chart_actors.txt`, the 3D map objects and their properties
+- **F7** — turns the story trace on or off. While on, every 100 ms it writes only the values that changed (title panel, path characters, guide bar, branch conditions, camera stops, and the mod's own state) to `story_trace.txt`, along with every line the mod speaks
+- **F8** — adds a numbered marker to the story trace, so a tester can flag a moment and describe it later
+
+All dump files are in `SparkingZERO\Binaries\Win64\AE_debug\` and are cleared when the game starts.
 
 ### Adding New Characters
 

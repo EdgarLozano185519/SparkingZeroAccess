@@ -685,10 +685,9 @@ function Battle.Reset()
     _lastSparkingBars = nil
     _lastSkillPoints = nil
     _lastPawnPath = nil
-    _lastEnemyHP = nil
-    _maxEnemyHP = nil
-    _lastEnemyHPThreshold = nil
-    _lastEnemyKIBars = nil
+    -- Per-opponent HP/KI tracking (was left over from the pre-_enemyState
+    -- variables, so opponent state leaked into the next battle)
+    _enemyState = {}
     _pawnDetectionLogged = false
     -- Note: do NOT reset _playerSide here — persists for rematches.
     -- It's cleared by ResetPlayerSide() when entering character select.
@@ -700,7 +699,6 @@ function Battle.Reset()
     _cachedResultWidget = nil
     _resultMissUntil = 0
     _lastTimerSeconds = nil
-    _announcedTimerMarks = {}
     _timerStartAnnounced = false
 end
 

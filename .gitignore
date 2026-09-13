@@ -27,6 +27,9 @@ docs/claude-md-improvements.md
 age-of-decadence-analyse.txt
 nul
 
+# Local dev tools (luacheck.exe, see helpers\Check-Lua.ps1)
+tools/
+
 # Build artifacts
 *.o
 *.a

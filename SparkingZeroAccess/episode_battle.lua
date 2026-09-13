@@ -22,6 +22,8 @@ local GetWidgetName = H.GetWidgetName
 local GetClassName = H.GetClassName
 
 local IconParser = require("icon_parser")
+local EpisodeMap = require("episode_map")
+local CharaNames = require("chara_names")
 
 local EpisodeBattle = {}
 
@@ -44,11 +46,14 @@ local _lastScenario0 = nil        -- last Text_ScenarioTitle_0 (character saga)
 local _lastScenario1 = nil        -- last Text_ScenarioTitle_1 (arc name)
 local _announcedMapEntry = false  -- whether we announced entry to story map
 local _mapEntryDelay = 0          -- countdown before entry announcement (lets transition finish)
+local _eventTitleVisible = false  -- Text_EventTitle shown (false on path nodes, text is kept)
 
 -- Branch conditions state
 local _lastBranchConditions = ""  -- serialized string of last announced conditions
 local _lastGuideButtonCount = 0   -- visible guide button count (story node vs path node detection)
 local _onPathNode = false         -- true when on a path/connector node
+local _pathPendingSig = nil       -- path character signature seen last tick
+local _pathAnnouncedSig = nil     -- path character signature last announced
 
 -- Cutscene state
 local _announcedSkip = false      -- whether we announced "hold to skip" for this cutscene
@@ -80,9 +85,12 @@ function EpisodeBattle.FullReset()
     _lastScenario1 = nil
     _announcedMapEntry = false
     _mapEntryDelay = 0
+    _eventTitleVisible = false
     _lastBranchConditions = ""
     _lastGuideButtonCount = 0
     _onPathNode = false
+    _pathPendingSig = nil
+    _pathAnnouncedSig = nil
     _announcedSkip = false
     _lastCutsceneText = nil
 end
@@ -126,6 +134,62 @@ end
 
 local function ReadChartText(fieldName)
     return ReadTextInContainer(fieldName, "WBP_GRP_AI_ChartTitle_C")
+end
+
+--- Like ReadChartText, but also returns whether the TextBlock is visible.
+--- Visibility defaults to true if it can't be read (never silence speech on error).
+local function ReadChartTextWithVisibility(fieldName)
+    local textBlocks = FindAllOf("TextBlock")
+    if not textBlocks then return nil, false end
+
+    for _, tb in ipairs(textBlocks) do
+        if GetWidgetName(tb) == fieldName then
+            local ok, tbPath = pcall(function() return tb:GetFullName() end)
+            if ok and tbPath:find("WBP_GRP_AI_ChartTitle_C", 1, true)
+               and tbPath:find("Transient", 1, true) then
+                local ok2, text = pcall(function() return tb:GetText():ToString() end)
+                if ok2 and text and text ~= "" then
+                    local vOk, vis = pcall(function() return tb:IsVisible() end)
+                    if not vOk then
+                        print("[AE] Story map: could not read " .. fieldName .. " visibility")
+                    end
+                    return text, (not vOk) or vis == true
+                end
+            end
+        end
+    end
+    return nil, false
+end
+
+--- Character names in the title panel's "OtherCharacter" box, shown on path
+--- nodes (WBP_OBJ_AI_OtherCharaIcon_0-4). These portraits are the only thing
+--- on screen that changes between consecutive path nodes.
+local function ReadPathCharacters()
+    local names = {}
+    local ok, icons = pcall(FindAllOf, "WBP_OBJ_AI_CharaIcon_C")
+    if not ok or not icons then return names end
+
+    local byIndex = {}
+    for _, icon in ipairs(icons) do
+        local okP, path = pcall(function() return icon:GetFullName() end)
+        local idx = okP and path:find("WBP_GRP_AI_ChartTitle_C", 1, true)
+            and path:find("Transient", 1, true)
+            and path:match("WBP_OBJ_AI_OtherCharaIcon_(%d+)$")
+        if idx and TryCall(icon, "IsVisible") then
+            local okT, texName = pcall(function()
+                local res = icon.IMG_Chara.Brush.ResourceObject
+                return res and res:GetFullName() or nil
+            end)
+            local charaId = okT and texName and CharaNames.ExtractIdFromTexture(texName) or nil
+            if charaId then
+                byIndex[tonumber(idx)] = CharaNames.GetName(charaId) or ("Character " .. charaId)
+            end
+        end
+    end
+    for i = 0, 4 do
+        if byIndex[i] then table.insert(names, byIndex[i]) end
+    end
+    return names
 end
 
 --- Read the button caption from a BTN_Menu widget matching a suffix.
@@ -305,6 +369,7 @@ function EpisodeBattle.PollStoryMap()
             _lastChapter = nil
             _lastScenario0 = nil
             _lastScenario1 = nil
+            _eventTitleVisible = false
             print("[AE] Story map closed")
         end
         return
@@ -319,9 +384,13 @@ function EpisodeBattle.PollStoryMap()
         print("[AE] Story map detected, waiting for transition")
     end
 
-    -- Read event title, filtering "???" placeholder
-    local eventTitle = ReadChartText("Text_EventTitle")
-    if eventTitle == "???" then eventTitle = nil end
+    -- Read event title + visibility. On path nodes the game collapses the
+    -- title but keeps the previous episode's text, so visibility (not just
+    -- text) tells us when the player steps back onto an episode.
+    -- "???" = unrevealed episode (also a placeholder during the entry transition)
+    local eventTitle, titleVisible = ReadChartTextWithVisibility("Text_EventTitle")
+    local titleUnknown = (eventTitle == "???")
+    if titleUnknown then eventTitle = nil end
 
     -- Delayed entry announcement (waits for char select to fade)
     if not _announcedMapEntry then
@@ -349,7 +418,9 @@ function EpisodeBattle.PollStoryMap()
         _lastScenario1 = arc
         _lastChapter = chapter
         _lastEventTitle = eventTitle
-        if eventTitle then
+        _eventTitleVisible = titleVisible
+        -- Entering on a path node: the hidden title belongs to another episode
+        if eventTitle and titleVisible then
             SpeakQueued(eventTitle)
         end
 
@@ -371,8 +442,28 @@ function EpisodeBattle.PollStoryMap()
         return
     end
 
-    -- Poll for node changes
-    if eventTitle and eventTitle ~= _lastEventTitle then
+    -- While a popup or the Episode Map is open, episode_map.lua speaks.
+    -- Keep node state in sync silently so closing it doesn't re-announce.
+    if EpisodeMap.IsOverlayOpen() then
+        if eventTitle then _lastEventTitle = eventTitle end
+        _eventTitleVisible = titleVisible
+        return
+    end
+
+    -- Poll for node changes: a new title, or the same title becoming visible
+    -- again (player returned to an episode from a path node)
+    local becameVisible = titleVisible and not _eventTitleVisible
+    if titleVisible ~= _eventTitleVisible then
+        print("[AE] Story map title visible: " .. tostring(titleVisible)
+            .. " (" .. tostring(eventTitle or (titleUnknown and "???")) .. ")")
+        _eventTitleVisible = titleVisible
+    end
+
+    if titleVisible and titleUnknown and (becameVisible or _lastEventTitle ~= "???") then
+        _lastEventTitle = "???"
+        Speak("Unknown episode", true)
+        print("[AE] Story node: unknown (???)")
+    elseif titleVisible and eventTitle and (eventTitle ~= _lastEventTitle or becameVisible) then
         _lastEventTitle = eventTitle
         Speak(eventTitle, true)
         print("[AE] Story node: " .. eventTitle)
@@ -409,13 +500,36 @@ function EpisodeBattle.PollStoryMap()
         end
 
         if visCount ~= _lastGuideButtonCount then
-            local wasPath = _onPathNode
             _lastGuideButtonCount = visCount
             -- Path nodes have <=3 guide buttons, story nodes have 4+
-            _onPathNode = (visCount <= 3)
+            local nowPath = (visCount <= 3)
+            if nowPath ~= _onPathNode then
+                _onPathNode = nowPath
+                _pathPendingSig = nil
+                _pathAnnouncedSig = nil
+            end
+        end
 
-            if _onPathNode and not wasPath then
-                -- Just moved to a path node — read branch conditions
+        -- Consecutive path nodes only differ in the title panel's character
+        -- portraits, so announce on entering a path node and whenever that
+        -- signature changes. Wait one tick for it to settle (portraits can
+        -- update a frame after the guide bar).
+        local pathChars = {}
+        local announcePath = false
+        if _onPathNode then
+            pathChars = ReadPathCharacters()
+            local pathSig = table.concat(pathChars, ", ")
+            if pathSig ~= _pathPendingSig then
+                _pathPendingSig = pathSig
+            elseif pathSig ~= _pathAnnouncedSig then
+                _pathAnnouncedSig = pathSig
+                announcePath = true
+            end
+        end
+
+        do
+            if announcePath then
+                -- Moved onto a path node — read characters + branch conditions
                 local ok2, branchWidgets = pcall(FindAllOf, "WBP_OBJ_AI_BranchConditons_Set_C")
                 if ok2 and branchWidgets then
                     local visibleIds = {}
@@ -460,21 +574,32 @@ function EpisodeBattle.PollStoryMap()
                             end
                         end
 
-                        if #parts > 0 then
-                            Speak("Path", true)
-                            for _, part in ipairs(parts) do
-                                SpeakQueued(part)
-                            end
-                            print("[AE] Path node, conditions: " .. table.concat(parts, ", "))
-                        else
-                            Speak("Path", true)
-                            print("[AE] Path node, no conditions")
+                        Speak("Path", true)
+                        if #pathChars > 0 then
+                            SpeakQueued(table.concat(pathChars, ", "))
                         end
+                        for _, part in ipairs(parts) do
+                            SpeakQueued(part)
+                        end
+                        print("[AE] Path node, characters: " .. table.concat(pathChars, ", ")
+                            .. " | conditions: " .. (#parts > 0 and table.concat(parts, ", ") or "none"))
                     end
                 end
             end
         end
     end
+end
+
+--- Internal state snapshot for the story trace (debug_tools.lua, F7).
+function EpisodeBattle.GetDebugState()
+    return {
+        { "mod.storyMapActive", tostring(_storyMapActive) },
+        { "mod.lastEventTitle", tostring(_lastEventTitle) },
+        { "mod.titleVisible", tostring(_eventTitleVisible) },
+        { "mod.guideCount", tostring(_lastGuideButtonCount) },
+        { "mod.onPath", tostring(_onPathNode) },
+        { "mod.pathAnnounced", tostring(_pathAnnouncedSig) },
+    }
 end
 
 --- Returns true if the story map is currently active.

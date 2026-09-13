@@ -27,11 +27,20 @@ function Speech.IsLoaded()
     return speech_loaded
 end
 
+-- Optional observer called with (text, interrupt) for everything spoken.
+-- Used by the story trace in debug_tools.lua.
+local _listener = nil
+
+function Speech.SetListener(fn)
+    _listener = fn
+end
+
 function Speech.Speak(text, interrupt)
     if not speech_loaded or not speech then return end
     if not text or text == "" then return end
     text = IconParser.Parse(text)
     if not text or text == "" then return end
+    if _listener then pcall(_listener, text, interrupt ~= false) end
     speech.say(text, interrupt ~= false)
 end
 
@@ -40,6 +49,7 @@ function Speech.SpeakQueued(text)
     if not text or text == "" then return end
     text = IconParser.Parse(text)
     if not text or text == "" then return end
+    if _listener then pcall(_listener, text, false) end
     speech.say(text, false)
 end
 

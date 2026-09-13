@@ -58,6 +58,19 @@ Note: LoopAsync is deprecated in UE4SS dev builds. Replacement is `LoopInGameThr
 - `widget:GetChildrenCount()` / `widget:GetChildAt(index)` — child widget traversal.
 - `widget:GetText():ToString()` — reads text from TextBlock/RichTextBlock widgets. May fail from LoopAsync context for some widgets (threading issue). Use ExecuteInGameThread as workaround.
 - `image.Brush.ResourceObject:GetFName():ToString()` — reads the texture/material name from an Image widget's brush. Works from LoopAsync context.
+- `switcher:GetActiveWidgetIndex()` — active page of a WidgetSwitcher. All pages report `IsVisible() == true`, so this is the only way to know which one is shown (e.g. CharaIcon Normal/Unknown/Lock, popup Info/Outline).
+- `widget:GetRenderOpacity()` — widgets faded out by animations keep their visibility; closed Episode Battle popups have root opacity 0 while `IsVisible()` stays true.
+- `widget:GetParent()` — parent panel. Useful when the element you need (e.g. `Overlay_Cursor`) is not a Blueprint variable but one of its children is.
+- `userWidget.WidgetTree.RootWidget` — root of a UserWidget's own tree; combine with `GetChildrenCount`/`GetChildAt` on panels to walk the full hierarchy (see F6 dump in debug_tools.lua).
+- Named child widgets marked "Is Variable" in the Blueprint are properties: `details.WidgetSwitcher_Main`, `piece.IMG_Corner_0`. Check the F6 dump's property list to see which ones exist.
+
+## Game-Specific Findings (Sparking! ZERO)
+
+- **FindAllOf with C++ base classes:** `FindAllOf("SSDragonAdventureIFCTEventDetailsManager")` returns the Blueprint subclass instances (`WBP_GRP_AI_ChartDetails_C`). Use the C++ base when Blueprint class names vary (the Episode Map has one class per saga). Returns nil when no instance exists yet.
+- **`SSMenuWidget.bIsActive`:** game menu widgets expose a bool that is true while the menu is open/active. Not reliable for every class (Map_CharacterSelect stays false while visible).
+- **Reading a property that doesn't exist** on a widget does not error: it returns a non-nil UObject-like value. Check `type(value) == "boolean"` (or the expected type) instead of `~= nil`.
+- **Hot reload:** `EnableHotReloadSystem = 1` + Ctrl+R freezes the game and mod. Keep it off.
+- **Actors:** `actor:K2_GetActorLocation()` returns a vector with X/Y/Z. `PlayerCameraManager:GetCameraLocation()` gives the camera position (the story map camera glides between nodes). Both used by the F7 trace; not yet verified in game.
 
 ## Key Safety Rules
 

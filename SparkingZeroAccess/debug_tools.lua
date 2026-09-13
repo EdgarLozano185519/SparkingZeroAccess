@@ -6,6 +6,10 @@
         F5 = Toggle continuous debug dump (250ms, change-only)
         F3 = Battle state dump
         F4 = Character select dump
+        F6 = Story map structure dump (appends one entry per press);
+             first press on the story map also saves chart_actors.txt
+        F7 = Toggle story trace (story_trace.txt, change log + spoken text)
+        F8 = Trace marker (numbered, works with trace on or off)
 
     All dumps go to AE_debug/ folder in the Win64 directory.
 ]]
@@ -104,6 +108,9 @@ local function BuildDumpEntry()
     table.insert(lines, "========== Entry " .. _dumpEntryCount .. " [" .. timestamp .. "] ==========")
     table.insert(lines, "")
 
+    -- TextBlock lists fetched for the focused subtree, reused for "All Visible Text"
+    local allTB, allRTB = nil, nil
+
     -- === Focused Widget (F8 equivalent) ===
     table.insert(lines, "--- Focused Widget ---")
     if focused then
@@ -114,7 +121,7 @@ local function BuildDumpEntry()
         -- Subtree text
         local focusedInstance = GetWidgetName(focused)
         local foundAny = false
-        local allTB = FindAllOf("TextBlock")
+        allTB = FindAllOf("TextBlock")
         if allTB then
             for _, tb in ipairs(allTB) do
                 local ok2, tbPath = pcall(function() return tb:GetFullName() end)
@@ -128,7 +135,7 @@ local function BuildDumpEntry()
                 end
             end
         end
-        local allRTB = FindAllOf("RichTextBlock")
+        allRTB = FindAllOf("RichTextBlock")
         if allRTB then
             for _, rb in ipairs(allRTB) do
                 local ok2, rbPath = pcall(function() return rb:GetFullName() end)
@@ -1175,6 +1182,551 @@ local function DumpBattleGameState()
     AppendDump("battle_state.txt", table.concat(lines, "\n") .. "\n")
 end
 
+-- === F6: STORY MAP STRUCTURE DUMP ===
+-- Walks every visible top-level widget tree (map, popups, guide bar) and
+-- records hierarchy, visibility, layout position, textures, and text.
+-- Goal: find node positions, cleared/locked flags, connections, and the cursor.
+-- Appends one entry per press so consecutive nodes can be compared.
+
+local STORY_MAP_TREE_BUDGET = 20000  -- max widget lines per entry
+local STORY_MAP_MAX_DEPTH = 25
+local _storyMapEntryCount = 0
+local _storyMapSeenClasses = {}  -- non-episode classes whose properties were already dumped
+
+local VIS_NAMES = {
+    [0] = "Visible", [1] = "Collapsed", [2] = "Hidden",
+    [3] = "HitTestInvisible", [4] = "SelfHitTestInvisible",
+}
+
+local function Vec2Str(v)
+    local ok, s = pcall(function() return string.format("%.1f,%.1f", v.X, v.Y) end)
+    return ok and s or nil
+end
+
+local function SafeClassName(obj)
+    local ok, name = pcall(function() return obj:GetClass():GetFName():ToString() end)
+    return ok and name or "?"
+end
+
+--- Visibility, slot position, render translation/opacity for one widget.
+local function DescribeLayout(w)
+    local parts = {}
+
+    local vis = TryCall(w, "GetVisibility")
+    if vis ~= nil then
+        table.insert(parts, "vis=" .. (VIS_NAMES[vis] or tostring(vis)))
+    end
+
+    local slotOk, slot = pcall(function() return w.Slot end)
+    if slotOk and slot and H.IsValidRef(slot) then
+        local slotClass = SafeClassName(slot)
+        if slotClass == "CanvasPanelSlot" then
+            local pos = nil
+            local pOk, p = pcall(function() return slot:GetPosition() end)
+            if pOk and p then pos = Vec2Str(p) end
+            if not pos then
+                local oOk, o = pcall(function()
+                    local off = slot.LayoutData.Offsets
+                    return string.format("%.1f,%.1f", off.Left, off.Top)
+                end)
+                if oOk then pos = o end
+            end
+            table.insert(parts, "canvasPos=" .. (pos or "?"))
+            local sOk, sz = pcall(function() return slot:GetSize() end)
+            if sOk and sz then
+                local s = Vec2Str(sz)
+                if s then table.insert(parts, "size=" .. s) end
+            end
+        else
+            table.insert(parts, "slot=" .. slotClass)
+        end
+    end
+
+    local tOk, tr = pcall(function() return w.RenderTransform.Translation end)
+    if tOk and tr then
+        local s = Vec2Str(tr)
+        if s and s ~= "0.0,0.0" then table.insert(parts, "renderT=" .. s) end
+    end
+
+    local opacity = TryCall(w, "GetRenderOpacity")
+    if type(opacity) == "number" and opacity < 0.999 then
+        table.insert(parts, string.format("opacity=%.2f", opacity))
+    end
+
+    -- Active page of switchers (children all report visible otherwise)
+    local active = TryCall(w, "GetActiveWidgetIndex")
+    if type(active) == "number" then
+        table.insert(parts, "activeIndex=" .. active)
+    end
+
+    -- Game menu active flag (true while a popup/overlay is open)
+    local isActive = TryGetProperty(w, "bIsActive")
+    if type(isActive) == "boolean" then
+        table.insert(parts, "bIsActive=" .. tostring(isActive))
+    end
+
+    return table.concat(parts, " ")
+end
+
+--- Text for TextBlock/RichTextBlock, texture name for Image.
+local function DescribeContent(w, className)
+    if className:find("TextBlock", 1, true) then
+        local ok, text = pcall(function() return w:GetText():ToString() end)
+        if ok and text and text ~= "" then
+            return " text=\"" .. text:gsub("\n", "\\n") .. "\""
+        end
+    elseif className == "Image" then
+        for _, bk in ipairs({"Brush", "brush"}) do
+            local ok, texName = pcall(function()
+                local res = w[bk].ResourceObject
+                if not res then return nil end
+                return res:GetFullName()
+            end)
+            if ok and texName then
+                return " tex=" .. (texName:match("([^%.]+)$") or texName)
+            end
+        end
+    end
+    return ""
+end
+
+local function WalkWidgetTree(w, depth, lines, budget)
+    if budget.n <= 0 then return end
+    budget.n = budget.n - 1
+
+    local className = SafeClassName(w)
+    table.insert(lines, string.rep("  ", depth) .. className .. " " .. GetWidgetName(w)
+        .. " [" .. DescribeLayout(w) .. "]" .. DescribeContent(w, className))
+
+    if depth >= STORY_MAP_MAX_DEPTH then return end
+
+    -- PanelWidget children (CanvasPanel, Overlay, Border, SizeBox, ...)
+    local cOk, count = pcall(function() return w:GetChildrenCount() end)
+    if cOk and type(count) == "number" then
+        for i = 0, count - 1 do
+            local okc, child = pcall(function() return w:GetChildAt(i) end)
+            if okc and child and H.IsValidRef(child) then
+                WalkWidgetTree(child, depth + 1, lines, budget)
+            end
+        end
+        return
+    end
+
+    -- UserWidget: descend into its own widget tree
+    local rOk, root = pcall(function() return w.WidgetTree.RootWidget end)
+    if rOk and root and H.IsValidRef(root) then
+        WalkWidgetTree(root, depth + 1, lines, budget)
+    end
+end
+
+--- Blueprint/game-level properties only (stops at /Script/UMG base classes).
+local function DumpOwnProperties(obj, lines)
+    local clsOk, cls = pcall(function() return obj:GetClass() end)
+    if not clsOk or not cls then
+        table.insert(lines, "  (could not get class)")
+        return
+    end
+    while cls and cls:IsValid() do
+        local nameOk, clsName = pcall(function() return cls:GetFullName() end)
+        if not nameOk or clsName:find("/Script/UMG.", 1, true)
+           or clsName:find("/Script/Engine.", 1, true) then break end
+        table.insert(lines, "=== " .. clsName .. " ===")
+        pcall(function()
+            cls:ForEachProperty(function(Property)
+                local ok, line = pcall(DumpPropertyWithinObject, obj, Property)
+                if ok and type(line) == "string" then
+                    table.insert(lines, "  " .. line)
+                end
+            end)
+        end)
+        local superOk, super = pcall(function() return cls:GetSuperStruct() end)
+        if superOk and super and super:IsValid() then
+            cls = super
+        else
+            break
+        end
+    end
+end
+
+local function DumpStoryMap()
+    local lines = {}
+    _storyMapEntryCount = _storyMapEntryCount + 1
+    table.insert(lines, "========== Story Map Entry " .. _storyMapEntryCount
+        .. " [" .. os.date("%Y-%m-%d %H:%M:%S") .. "] ==========")
+
+    local allWidgets = FindAllOf("UserWidget")
+    if not allWidgets then
+        table.insert(lines, "(no UserWidgets found)")
+        AppendDump("story_map.txt", table.concat(lines, "\n") .. "\n\n")
+        return 0
+    end
+
+    -- Collect all visible widgets, grouped by class. Roots are top-level
+    -- widgets (not nested in another widget's WidgetTree), so popups and
+    -- map widgets without the "_AI_" prefix are included too.
+    local classes, classOrder, roots = {}, {}, {}
+    local focusedName = "(none)"
+    for _, w in ipairs(allWidgets) do
+        local ok, fullName = pcall(function() return w:GetFullName() end)
+        if ok and fullName:find("Transient", 1, true) and TryCall(w, "IsVisible") then
+            local className = SafeClassName(w)
+            if not classes[className] then
+                classes[className] = {}
+                table.insert(classOrder, className)
+            end
+            table.insert(classes[className], w)
+
+            local name = GetWidgetName(w)
+            if TryCall(w, "HasKeyboardFocus") then
+                focusedName = className .. " " .. name
+            end
+
+            local path = fullName:match("^%S+%s+(.*)$") or fullName
+            local prefix = path:sub(1, #path - #name)
+            if not prefix:find("WidgetTree", 1, true) then
+                table.insert(roots, w)
+            end
+        end
+    end
+
+    -- Current node title, for correlating entries with the player's position
+    local title = "(none)"
+    local textBlocks = FindAllOf("TextBlock")
+    if textBlocks then
+        for _, tb in ipairs(textBlocks) do
+            if GetWidgetName(tb) == "Text_EventTitle" then
+                local ok, text = pcall(function() return tb:GetText():ToString() end)
+                if ok and text and text ~= "" then title = text end
+            end
+        end
+    end
+    table.insert(lines, "Text_EventTitle: " .. title)
+    table.insert(lines, "Keyboard focus: " .. focusedName)
+    table.insert(lines, "")
+
+    table.insert(lines, "--- Visible classes ---")
+    for _, className in ipairs(classOrder) do
+        table.insert(lines, className .. " (" .. #classes[className] .. ")")
+    end
+    table.insert(lines, "")
+
+    local budget = { n = STORY_MAP_TREE_BUDGET }
+    for _, root in ipairs(roots) do
+        local ok, fullName = pcall(function() return root:GetFullName() end)
+        table.insert(lines, "--- Tree: " .. (ok and fullName or "?") .. " ---")
+        local wOk, err = pcall(WalkWidgetTree, root, 0, lines, budget)
+        if not wOk then
+            table.insert(lines, "  (walk error: " .. tostring(err) .. ")")
+        end
+        table.insert(lines, "")
+    end
+    if budget.n <= 0 then
+        table.insert(lines, "(tree budget exhausted, output truncated)")
+    end
+
+    -- Properties of the first instance of each game widget class. Episode
+    -- classes ("_AI_") every press, since values like the selected node may
+    -- change; other classes once per session to keep the file readable.
+    for _, className in ipairs(classOrder) do
+        local isEpisode = className:find("_AI_", 1, true) ~= nil
+        if className:find("^WBP_") and (isEpisode or not _storyMapSeenClasses[className]) then
+            _storyMapSeenClasses[className] = true
+            table.insert(lines, "--- Properties: " .. className .. " (first instance) ---")
+            local ok, err = pcall(DumpOwnProperties, classes[className][1], lines)
+            if not ok then
+                table.insert(lines, "  (property error: " .. tostring(err) .. ")")
+            end
+            table.insert(lines, "")
+        end
+    end
+
+    AppendDump("story_map.txt", table.concat(lines, "\n") .. "\n\n")
+    print("[AE-DBG] Story map entry " .. _storyMapEntryCount .. ": " .. #roots .. " roots, "
+        .. (STORY_MAP_TREE_BUDGET - budget.n) .. " widgets")
+    return #roots
+end
+
+-- === CHART ACTORS (saved on first F6 press on the story map) ===
+-- The 3D story map nodes are level actors (Map800_Chart_* level instance),
+-- not widgets. Lists every matching actor with location, plus the game-level
+-- properties of the first instance of each class.
+
+local _chartActorsDumped = false
+
+local function DumpChartActors()
+    local lines = { "===== Chart actors " .. os.date("%Y-%m-%d %H:%M:%S") .. " =====" }
+    local ok, actors = pcall(FindAllOf, "Actor")
+    if not ok or not actors then
+        table.insert(lines, "(FindAllOf Actor returned nothing)")
+        WriteDump("chart_actors.txt", table.concat(lines, "\n") .. "\n")
+        return 0
+    end
+
+    local classes, order, total = {}, {}, 0
+    for _, actor in ipairs(actors) do
+        local nOk, full = pcall(function() return actor:GetFullName() end)
+        if nOk and not full:find("Default__", 1, true)
+           and (full:find("Chart", 1, true) or full:find("AdventureIF", 1, true)) then
+            local cls = SafeClassName(actor)
+            if not classes[cls] then
+                classes[cls] = {}
+                table.insert(order, cls)
+            end
+            table.insert(classes[cls], actor)
+            total = total + 1
+        end
+    end
+    table.insert(lines, "Matched " .. total .. " actors in " .. #order .. " classes")
+
+    for _, cls in ipairs(order) do
+        local list = classes[cls]
+        table.insert(lines, "")
+        table.insert(lines, "--- " .. cls .. " (" .. #list .. ") ---")
+        for i, actor in ipairs(list) do
+            if i > 80 then
+                table.insert(lines, "  ... " .. (#list - 80) .. " more")
+                break
+            end
+            local locOk, locStr = pcall(function()
+                local loc = actor:K2_GetActorLocation()
+                return string.format(" @ %.0f, %.0f, %.0f", loc.X, loc.Y, loc.Z)
+            end)
+            local hidden = TryGetProperty(actor, "bHidden")
+            table.insert(lines, "  " .. GetWidgetName(actor) .. (locOk and locStr or "")
+                .. (type(hidden) == "boolean" and (" hidden=" .. tostring(hidden)) or ""))
+        end
+        table.insert(lines, "  [properties of first instance]")
+        local pOk, err = pcall(DumpOwnProperties, list[1], lines)
+        if not pOk then
+            table.insert(lines, "  (property error: " .. tostring(err) .. ")")
+        end
+    end
+
+    WriteDump("chart_actors.txt", table.concat(lines, "\n") .. "\n")
+    print("[AE-DBG] Chart actors: " .. total .. " in " .. #order .. " classes")
+    return total
+end
+
+-- === F7: STORY TRACE / F8: MARKER ===
+-- Automatic change log for play-testing without F6 presses. While on, every
+-- 100ms snapshots story map state (mod internals, raw title panel, path
+-- characters, guide bar, branch conditions, camera) and appends only CHANGED
+-- values to story_trace.txt, plus every line the mod speaks.
+
+local CharaNames = require("chara_names")
+
+local TRACE_VALUE_MAX = 300
+
+local _traceActive = false
+local _traceGen = 0               -- invalidates old loops on quick off/on
+local _traceLast = {}             -- key -> last logged value
+local _traceLastError = nil
+local _traceMarker = 0
+local _traceStart = os.clock()
+local _camPrev = nil              -- camera location last tick
+local _camLogged = nil            -- camera location last logged
+
+local function TraceWrite(line)
+    AppendDump("story_trace.txt", string.format("%s +%7.1fs  %s\n",
+        os.date("%H:%M:%S"), os.clock() - _traceStart, line))
+end
+
+local function TextOf(widget)
+    local ok, text = pcall(function() return widget:GetText():ToString() end)
+    return ok and text or nil
+end
+
+local function TraceDistance(a, b)
+    return math.sqrt((a[1] - b[1]) ^ 2 + (a[2] - b[2]) ^ 2 + (a[3] - b[3]) ^ 2)
+end
+
+local function BuildTraceSnapshot()
+    local snap = {}
+    local function put(key, value)
+        local s = (value == nil) and "nil" or tostring(value)
+        s = s:gsub("[\r\n]+", " ")
+        if #s > TRACE_VALUE_MAX then s = s:sub(1, TRACE_VALUE_MAX) .. "..." end
+        table.insert(snap, { key, s })
+    end
+
+    -- Mod internal state
+    for _, modName in ipairs({ "episode_battle", "episode_map" }) do
+        local ok, mod = pcall(require, modName)
+        if ok and type(mod) == "table" and mod.GetDebugState then
+            local sOk, state = pcall(mod.GetDebugState)
+            if sOk and type(state) == "table" then
+                for _, kv in ipairs(state) do put(kv[1], kv[2]) end
+            end
+        end
+    end
+
+    -- Title panel text + visibility, branch condition texts
+    local titleFields = {
+        Text_ScenarioTitle_0 = true, Text_ScenarioTitle_1 = true,
+        Text_Chapter = true, Text_EventTitle = true, TXT_Orb = true,
+    }
+    local branchTexts = {}
+    local textBlocks = FindAllOf("TextBlock")
+    if textBlocks then
+        local found = {}
+        for _, tb in ipairs(textBlocks) do
+            local name = GetWidgetName(tb)
+            if titleFields[name] or name == "Text_BranchCondition_0" then
+                local ok, path = pcall(function() return tb:GetFullName() end)
+                if ok and path:find("Transient", 1, true) then
+                    if titleFields[name] and path:find("WBP_GRP_AI_ChartTitle_C", 1, true) then
+                        local vis = TryCall(tb, "IsVisible")
+                        found[name] = tostring(TextOf(tb)) .. (vis and "" or " [hidden]")
+                    elseif name == "Text_BranchCondition_0" then
+                        local inst = path:match("(WBP_OBJ_AI_BranchConditons_Set_C_%d+)")
+                        if inst then branchTexts[inst] = TextOf(tb) end
+                    end
+                end
+            end
+        end
+        local names = {}
+        for name in pairs(titleFields) do table.insert(names, name) end
+        table.sort(names)
+        for _, name in ipairs(names) do put("ui." .. name, found[name]) end
+    end
+
+    -- Path characters (title panel OtherCharaIcon_N portraits)
+    local charas = {}
+    local okI, icons = pcall(FindAllOf, "WBP_OBJ_AI_CharaIcon_C")
+    if okI and icons then
+        for _, icon in ipairs(icons) do
+            local ok, path = pcall(function() return icon:GetFullName() end)
+            local idx = ok and path:find("WBP_GRP_AI_ChartTitle_C", 1, true)
+                and path:match("WBP_OBJ_AI_OtherCharaIcon_(%d+)$")
+            if idx and TryCall(icon, "IsVisible") then
+                local tOk, texName = pcall(function()
+                    local res = icon.IMG_Chara.Brush.ResourceObject
+                    return res and res:GetFullName() or nil
+                end)
+                local id = tOk and texName and CharaNames.ExtractIdFromTexture(texName) or nil
+                if id then
+                    table.insert(charas, idx .. ":" .. (CharaNames.GetName(id) or id))
+                end
+            end
+        end
+    end
+    table.sort(charas)
+    put("ui.pathCharacters", table.concat(charas, ", "))
+
+    -- Guide bar (visible buttons, sorted by widget name)
+    local guide = {}
+    local okG, buttons = pcall(FindAllOf, "WBP_OBJ_Guide_Btn_0_C")
+    if okG and buttons then
+        for _, btn in ipairs(buttons) do
+            if TryCall(btn, "IsVisible") then
+                local okR, rt = pcall(function() return btn.RTEXT_Help_0 end)
+                table.insert(guide, { GetWidgetName(btn), (okR and rt and TextOf(rt)) or "?" })
+            end
+        end
+    end
+    table.sort(guide, function(a, b) return a[1] < b[1] end)
+    local guideParts = {}
+    for _, g in ipairs(guide) do table.insert(guideParts, g[2]) end
+    put("ui.guide", #guide .. " | " .. table.concat(guideParts, " | "))
+
+    -- Branch condition sets
+    local branchParts = {}
+    local okB, sets = pcall(FindAllOf, "WBP_OBJ_AI_BranchConditons_Set_C")
+    if okB and sets then
+        for _, set in ipairs(sets) do
+            local inst = GetWidgetName(set)
+            if branchTexts[inst] ~= nil then
+                local swOk, sw = pcall(function() return set.WidgetSwitcher_1 end)
+                local opacity = swOk and sw and TryCall(sw, "GetRenderOpacity") or nil
+                local page = swOk and sw and TryCall(sw, "GetActiveWidgetIndex") or nil
+                table.insert(branchParts, string.format("%s vis=%s page=%s opacity=%s text=%s",
+                    inst:match("_(%d+)$") or inst,
+                    tostring(TryCall(set, "IsVisible")),
+                    tostring(page),
+                    type(opacity) == "number" and string.format("%.2f", opacity) or "?",
+                    tostring(branchTexts[inst])))
+            end
+        end
+    end
+    table.sort(branchParts)
+    put("ui.branch", table.concat(branchParts, " ; "))
+
+    -- Camera location (moves between nodes on the 3D map)
+    local cam = nil
+    local okC, cams = pcall(FindAllOf, "PlayerCameraManager")
+    if okC and cams then
+        for _, c in ipairs(cams) do
+            local nOk, full = pcall(function() return c:GetFullName() end)
+            if nOk and not full:find("Default__", 1, true) then
+                local lOk, v = pcall(function()
+                    local loc = c:GetCameraLocation()
+                    return { loc.X, loc.Y, loc.Z }
+                end)
+                if lOk and v and type(v[1]) == "number" then
+                    cam = v
+                    break
+                end
+            end
+        end
+    end
+
+    return snap, cam
+end
+
+local function TraceTick()
+    -- Skip map transitions (FindAllOf can crash while objects are destroyed)
+    local okT, trackers = pcall(require, "poll_trackers")
+    if okT and type(trackers) == "table" and trackers.IsInTransition then
+        local tOk, inTransition = pcall(trackers.IsInTransition)
+        if tOk and inTransition then return end
+    end
+
+    local snap, cam = BuildTraceSnapshot()
+    for _, kv in ipairs(snap) do
+        local key, value = kv[1], kv[2]
+        local old = _traceLast[key]
+        if old ~= value then
+            if old == nil then
+                TraceWrite(key .. " = " .. value)
+            else
+                TraceWrite(key .. " = " .. value .. "   (was: " .. old .. ")")
+            end
+            _traceLast[key] = value
+        end
+    end
+
+    -- Camera glides between nodes: log only once it settles somewhere new
+    if cam then
+        if _camPrev and TraceDistance(cam, _camPrev) < 1
+           and (not _camLogged or TraceDistance(cam, _camLogged) > 50) then
+            TraceWrite(string.format("camera settled at %.0f, %.0f, %.0f", cam[1], cam[2], cam[3])
+                .. (_camLogged and string.format("   (moved %.0f)", TraceDistance(cam, _camLogged)) or ""))
+            _camLogged = cam
+        end
+        _camPrev = cam
+    end
+end
+
+local function StartTrace()
+    _traceGen = _traceGen + 1
+    local gen = _traceGen
+    _traceActive = true
+    _traceLast = {}
+    _traceLastError = nil
+    _camPrev, _camLogged = nil, nil
+    AppendDump("story_trace.txt", "\n===== Trace started " .. os.date("%Y-%m-%d %H:%M:%S") .. " =====\n")
+
+    LoopAsync(100, function()
+        if not _traceActive or gen ~= _traceGen then return true end  -- stop loop
+        local ok, err = pcall(TraceTick)
+        if not ok and tostring(err) ~= _traceLastError then
+            _traceLastError = tostring(err)
+            TraceWrite("TRACE ERROR: " .. _traceLastError)
+        end
+        return false
+    end)
+end
+
 -- === INIT & KEYBINDS ===
 
 function DebugTools.Init(SpeakFn)
@@ -1182,7 +1734,7 @@ function DebugTools.Init(SpeakFn)
     os.execute("mkdir " .. DUMP_DIR .. " 2>NUL")
 
     -- Clear dump files on startup
-    local filesToClear = {"debug_dump.txt", "chara_select.txt", "battle_gauges.txt", "battle_state.txt"}
+    local filesToClear = {"debug_dump.txt", "chara_select.txt", "battle_gauges.txt", "battle_state.txt", "story_map.txt", "story_trace.txt", "chart_actors.txt"}
     for _, f in ipairs(filesToClear) do
         local fh = io.open(DUMP_DIR .. "/" .. f, "w")
         if fh then
@@ -1223,7 +1775,67 @@ function DebugTools.Init(SpeakFn)
         if SpeakFn then SpeakFn("Battle dump complete", true) end
     end)
 
-    print("[AE-DBG] Debug tools loaded. F3=battle dump, F4=chara select, F5=toggle debug dump")
+    -- F6: Story map structure dump
+    RegisterKeyBind(Key.F6, function()
+        if SpeakFn then SpeakFn("Story map dump", true) end
+        local ok, result = pcall(DumpStoryMap)
+        if not ok then
+            AppendDump("story_map.txt", "--- ERROR: " .. tostring(result) .. " ---\n\n")
+            print("[AE-DBG] Story map dump error: " .. tostring(result))
+            if SpeakFn then SpeakFn("Story map dump failed", true) end
+        elseif result == 0 then
+            if SpeakFn then SpeakFn("Story map dump: no widgets found", true) end
+        else
+            if SpeakFn then SpeakFn("Story map dump " .. _storyMapEntryCount .. " complete", true) end
+        end
+
+        -- First press with chart actors present also saves the 3D map objects
+        if not _chartActorsDumped then
+            local aOk, count = pcall(DumpChartActors)
+            if not aOk then
+                print("[AE-DBG] Chart actor dump error: " .. tostring(count))
+            elseif type(count) == "number" and count > 0 then
+                _chartActorsDumped = true
+                if SpeakFn then SpeakFn("Map objects saved", false) end
+            end
+        end
+    end)
+
+    -- F7: Toggle story trace
+    RegisterKeyBind(Key.F7, function()
+        if _traceActive then
+            _traceActive = false
+            TraceWrite("===== Trace stopped =====")
+            if SpeakFn then SpeakFn("Trace off", true) end
+            print("[AE-DBG] Story trace stopped")
+        else
+            StartTrace()
+            if SpeakFn then SpeakFn("Trace on", true) end
+            print("[AE-DBG] Story trace started")
+        end
+    end)
+
+    -- F8: Numbered marker in the trace
+    RegisterKeyBind(Key.F8, function()
+        _traceMarker = _traceMarker + 1
+        TraceWrite("########## MARKER " .. _traceMarker .. " ##########")
+        print("[AE-DBG] Trace marker " .. _traceMarker)
+        if SpeakFn then SpeakFn("Marker " .. _traceMarker, true) end
+    end)
+
+    -- Record everything the mod speaks while the trace is on
+    local okS, Speech = pcall(require, "speech")
+    if okS and type(Speech) == "table" and Speech.SetListener then
+        Speech.SetListener(function(text, interrupt)
+            if _traceActive then
+                TraceWrite((interrupt and "SPEAK: " or "QUEUE: ") .. tostring(text))
+            end
+        end)
+    else
+        print("[AE-DBG] Speech listener unavailable, trace will not record speech")
+    end
+
+    print("[AE-DBG] Debug tools loaded. F3=battle dump, F4=chara select, F5=toggle debug dump, F6=story map dump, F7=story trace, F8=trace marker")
 end
 
 return DebugTools

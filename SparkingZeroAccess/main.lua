@@ -29,6 +29,7 @@ local Roster = require("chara_roster")
 local SkillList = require("skill_list")
 local Battle = require("battle")
 local EpisodeBattle = require("episode_battle")
+local EpisodeMap = require("episode_map")
 local Shop = require("shop")
 
 -- === FOCUS TRACKING ===
@@ -801,6 +802,9 @@ local function StartPollLoop()
         -- PollIntro removed (investigating retry crash)
         local ok6, err6 = pcall(Trackers.PollRoom)
         if not ok6 then print("[AE] PollRoom error: " .. tostring(err6)) end
+        -- Popups/Episode Map first, so story node polling sees fresh overlay state
+        local ok7m, err7m = pcall(EpisodeMap.Poll, EpisodeBattle.IsStoryMapActive())
+        if not ok7m then print("[AE] EpisodeMap.Poll error: " .. tostring(err7m)) end
         local ok7, err7 = pcall(EpisodeBattle.PollStoryMap)
         if not ok7 then print("[AE] PollStoryMap error: " .. tostring(err7)) end
         local ok8, err8 = pcall(EpisodeBattle.PollCutsceneSkip)
@@ -857,6 +861,7 @@ print("[AE] Initializing SparkingZeroAccess Phase 2...")
 Speech.Init()
 Trackers.Init(Speak, SpeakQueued)
 EpisodeBattle.Init(Speak, SpeakQueued)
+EpisodeMap.Init(Speak, SpeakQueued)
 Shop.Init(Speak, SpeakQueued)
 TeamOV.InitHook()
 Battle.Init()
@@ -888,6 +893,7 @@ RegisterLoadMapPostHook(function(engine, world)
     Battle.Reset()
     TeamOV.ClearCapturedName()
     EpisodeBattle.FullReset()  -- full reset on map change (story map too)
+    EpisodeMap.Reset()
     Trackers.ArmTransitionCooldown(0.8)
 end)
 

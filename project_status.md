@@ -14,11 +14,39 @@
 - [x] UE4SS v3.0.1 (dev) installed in SparkingZERO\Binaries\Win64
 - [x] UTOC Signature Bypass installed (dsound.dll + plugins\DBSparkingZeroUTOCBypass.asi)
 - [x] UE4SS settings configured (bUseUObjectArrayCache=false, GraphicsAPI=dx11)
+- [ ] Hot reload — tried 2026-09-12, Ctrl+R froze game + mod. Disabled again (EnableHotReloadSystem=0). Likely cause: LoopAsync loops / native hooks / speech DLL not surviving mod restart. Restart game after deploys
+- **Controller:** user plays with a DualShock 4
 - [x] UniversalSpeech.dll + nvdaControllerClient.dll + ZDSRAPI.dll deployed
 - [x] speech_bridge.dll (Lua C module) compiled and deployed
 - [x] SparkingZeroAccess Lua mod created and registered in mods.txt
 - [x] Speech output confirmed working (F9 test, NVDA spoke text)
 - [x] Inno Setup installer replaces AccessForge (2026-09-12) — see "Distribution / Installer"
+- [x] Lua dev tooling (2026-09-12): Lua 5.4.6 (winget DEVCOM.Lua, luac -p) + tools\luacheck.exe 1.2.0 (gitignored) + .luacheckrc + helpers\Check-Lua.ps1. Deploy-Mod.ps1 runs the check first. First run found: battle.lua Battle.Reset() cleared old undeclared enemy vars instead of _enemyState, so opponent HP/KI state leaked into the next battle (fixed: _enemyState = {}; UNTESTED in battle), and allTB/allRTB scope bug in F5 dump (fixed). 28 non-blocking warnings remain (unused vars/imports, shadowing) — cleanup candidate
+
+## Session Handoff (2026-09-12) — Story Map Accessibility + Dev Tooling
+
+Done this session:
+- F6 story map dumps revealed the popup and Episode Map structures (see "Story Map Popups & Episode Map" below)
+- episode_map.lua (new): Details popup (your team, opponents, clear condition, rewards), Recap popup (saga + recap text), Episode Map overlay (title, Battle/Event, arc + main/"what if" route, "Episode X of Y", synopsis, saga switch). User confirmed Details and Recap read as expected
+- episode_battle.lua: returning to an episode from a path node is announced again (title visibility, not text); "???" titles say "Unknown episode"; path nodes announce "Path", the characters shown (OtherCharaIcon portraits), and branch conditions, and re-announce when the portraits change (path to path movement)
+- User learned: Episode Battle first screen = character list (up/down), left/right = Continue / Story Map / New Game buttons (already read correctly)
+- Debug tools: F6 widget-tree dump (switcher page, bIsActive, chart_actors.txt on first press), F7 story trace (story_trace.txt, change log + spoken lines), F8 markers
+- UE4SS hot reload tried and disabled again (Ctrl+R froze the game)
+- Lua dev tooling: Lua 5.4.6 + luacheck 1.2.0, helpers\Check-Lua.ps1, run automatically by Deploy-Mod.ps1
+- luacheck found and fixed: battle.lua Battle.Reset() never cleared _enemyState (opponent HP/KI state leaked into the next battle); F5 dump allTB/allRTB scope bug
+
+Pending tests (user) — ask for results when continuing:
+- [ ] Path to path movement announces "Path" + characters + conditions (e.g. Piccolo's Saga chapter 2, press left on a path node). Do the portrait character names make sense for each path?
+- [ ] Episode Map overlay while moving: title, Battle/Event, arc, "Episode X of Y", synopsis; saga switching. Are "main story" / "what if" correct (Vegeta's Saga: Parental Bond, Number One Spot = what if?)
+- [ ] Details popup: "Your team" really lists the player's side
+- [ ] F7 trace writes story_trace.txt (changes, SPEAK/QUEUE lines, camera settled lines); F8 markers appear
+- [ ] F6 on the story map says "Map objects saved" and writes chart_actors.txt
+- [ ] Battle: opponent HP announcements still work across consecutive battles and rematches (Reset fix)
+
+Next steps:
+1. Read the user's story_trace.txt and chart_actors.txt: find cleared / unlocked / locked state of 3D chart nodes (user priority: "where to go next, what's locked")
+2. Announce node status on the story map, possibly a "next unplayed episode" hint
+3. Clean up the 28 non-blocking luacheck warnings (unused imports and variables, shadowing)
 
 ## Phase 1: UI Exploration (DONE)
 - [x] First UI dump completed (F10 / SparkingZeroAccess_dump.txt)
@@ -113,8 +141,17 @@
 - [x] Shop: purchase complete dialog — detected via header text change
 - [ ] Shop: page navigation — pager items visible but not yet announced
 - [ ] Shop: customize screen — not yet explored
-- [ ] Episode Battle: consecutive path nodes — no signal to detect movement between adjacent path nodes (no text/widget changes)
+- [ ] Episode Battle: consecutive path nodes (UNTESTED fix 2026-09-12) — only signal is ChartTitle WBP_OBJ_AI_OtherCharaIcon_N portrait textures (e.g. Piccolo saga ch.2: Frieza 4th Form -> Goku (Super)). Path announced on entry + on portrait signature change: "Path", characters, conditions. Portrait meaning unconfirmed
+- [ ] Debug: F7 story trace + F8 markers + chart_actors.txt (UNTESTED 2026-09-12) — verify trace output, then use chart_actors.txt to find node cleared/locked state
 - [ ] Episode Battle: story map "Close" (Square) toggle — outline panel visibility toggle, not yet handled
+- [ ] Episode Battle: story map navigation (user priority, 2026-09-12) — user is stuck on "where to go next". Needed:
+  - Per-episode status: cleared / unlocked / locked
+  - Main story vs "What If" route indicator (color-coded in game; find texture/color source)
+  - Triangle/Square popup with episode info — not read
+  - D-pad left/right on an episode — behavior unknown, investigate
+- [x] Debug: F6 story map dump (debug_tools.lua) — all top-level widget trees, now also switcher activeIndex + bIsActive
+- [ ] Episode Battle: episode_map.lua (2026-09-12, UNTESTED) — Details popup (team, clear condition, rewards), Recap popup, Episode Map overlay (title, Battle/Event, arc + main/"what if" route guess, episode X of Y, synopsis, saga switch). Needs in-game test; verify left team box = player team, row 00 = main story, cursor via Overlay_Cursor opacity
+- [ ] Episode Battle: 3D chart node status (cleared/locked) — nodes are level actors, not widgets; needs actor property exploration (F7 candidate)
 - [ ] PS4 icon table — separate from PS5, only Pad_05=Cross mapped so far. More mappings needed as discovered
 - [ ] skill_list.lua line 117 — `table.insert` crash: "bad argument #2 (number expected, got string)". Pre-existing bug, investigate next session
 - [ ] In-battle victory screen — removed (too many false triggers from intro dialogue TextWindow; player knows win/loss from gameplay)
@@ -246,12 +283,24 @@ Source: community Google Sheet, auto-updated via `uv run scripts/Update-CharaNam
   - Text_ScenarioTitle_0 (saga), Text_ScenarioTitle_1 (arc), Text_Chapter, Text_EventTitle (node title)
   - "???" in Text_EventTitle = placeholder, filtered out
   - No keyboard focus on map nodes — poll-based text change detection
-  - Path nodes: guide button count drops (<=3), Text_EventTitle unchanged
+  - Path nodes: guide button count drops (<=3), Text_EventTitle becomes Collapsed but KEEPS the previous episode's text. Returning to the same episode must be detected via title visibility (fixed 2026-09-12, was silent before)
   - WBP_OBJ_AI_BranchConditons_Set_C: Text_BranchCondition_0/1/2 — branch requirements
   - Branch conditions: use IsVisible() on parent widget to filter, but many stay visible across map
   - Entry announcement delayed ~100ms to avoid reading char select's stale guide bar / Japanese placeholders
 - **Cutscene:** WBP_GRP_AI_EventSkip_C with hold button "Skip" — FindFirstOf guarded by _announcedEntry flag
 - **Cutscene dialog:** WBP_GRP_Common_EventText_C > WBP_OBJ_Common_TextWindow with Text_CharaName + RichText_MainTalk (not yet implemented, voice acted)
+
+### Story Map Popups & Episode Map (2026-09-12, from F6 dumps)
+- **Module:** episode_map.lua (polled before PollStoryMap; story node announcements pause while an overlay is open)
+- **3D chart:** nodes are level actors (Map800_Chart_XXXX_XX level instance, e.g. Text_Branch_002_Blueprint_C), NOT widgets. Only the title panel (WBP_GRP_AI_ChartTitle_C) is UI
+- **Open detection:** closed popups stay alive/visible with root CanvasPanel opacity 0. Use SSMenuWidget.bIsActive + IsVisible + opacity
+- **C++ classes (stable across sagas):** SSDragonAdventureIFCTEventDetailsManager (details popup), SSDragonAdventureIFCTMapManager (episode map root), SSDragonAdventureIFCTMapIconWidget (piece, NameProperty EventBlockName), SSDragonAdventureIFCTMapIslandWidget (block), SSDragonAdventureIFCTMapRowWidget, SSDragonAdventureIFCTMapOutlineManager, SSDragonAdventureIFCTMapCharaSelectManager, SSDragonAdventureIFCTEventTitleManager (ChartTitle), SSDragonAdventureIFCTRootInfoManager (branch conditions)
+- **Details popup WBP_GRP_AI_ChartDetails_C:** WidgetSwitcher_Main page 0 = Info (WBP_OBJ_AI_TeamList_Set: CharaIcon_0-4 left box, 5-9 right box; VictoryConditions_Set: CategoryTitleText + Text_StageName; Reward_Set: Reward_0-6 with Text_RewardName/Count/Num; TXT_Reward_Text), page 1 = Outline (CategoryTitleText saga + TXT_Outline recap). Pager + BTN_Page_L/R (Pad_06/Pad_10) for multiple pages. Untranslated placeholders are Japanese
+- **WBP_OBJ_AI_CharaIcon_C:** WidgetSwitcher_0 (0 Normal, 1 Unknown "?", 2 Lock), IMG_Chara texture T_UI_ChThumbP1_XXXX (chara_names lookup), T_UI_BS_IconDummy_00 = empty slot
+- **Episode Map WBP_GRP_AI_Map_0020_60_C (Vegeta):** Row_00 (Block_01 Planet Namek Arc, 02 Android/Cell Arc, 03 Majin Buu Arc) + Row_01 (Block_08 "Parental Bond", 09 "Number One Spot", assumed "what if" arcs, row opacity 0). Block: TXT_ChapterTitle, pieces WBP_OBJ_AI_Map_Piece_NN (WidgetSwitcher_Icon 0 Event / 1 Battle, Overlay_Cursor opacity 1 on selected), thumbnails (T_EventBlock_* when reached, PT_00 placeholder + Hidden otherwise). Some pieces Hidden (meaning unconfirmed: locked or unrevealed)
+- **Map_Outline:** TXT_Title, WidgetSwitcher_Header (0 Battle, 1 Event), TXT_main synopsis, IMG_OutlineThumbnail
+- **Map_CharacterSelect:** TXT_CharacterName (saga), IMG_ArrowL/R to switch saga; bIsActive stays false while visible
+- **Guide bar on map:** Back, Details (Pad_05), Recap (Pad_04), Change Difficulty (Pad_07), Episode Map (Pad_11). Path nodes hide buttons 3-4 and show OtherCharacter icons in ChartTitle
 
 ### Stage/BGM/Settings Select
 - WBP_GRP_BS_StageList_DP2_C — list container with Text_Title header ("Stage", etc.)
@@ -374,12 +423,14 @@ Follow-ups:
   - poll_trackers.lua — dialog, help window, screen change, room ID/status polling
   - icon_parser.lua — converts RichText icon markup to readable text (full PS/Xbox/keyboard mappings)
   - skill_list.lua — Explanation of Controls overlay: skill name, button combo, cost, description
-  - episode_battle.lua — Episode Battle (story mode): char select, story map, cutscene skip
+  - episode_battle.lua — Episode Battle (story mode): char select, story map, path nodes (portrait signature), cutscene skip
+  - episode_map.lua — Episode Battle popups: Details (team/condition/rewards), Recap, Episode Map overlay (polled before PollStoryMap, pauses node announcements while open)
   - shop.lua — Shop: item grid (S/L types), categories, purchase dialogs, Zeni balance
   - battle.lua — battle HUD: HP/KI/Sparking announcements, opponent tracking, intro skip
   - team_overview.lua — team setup screen: slot navigation, bubble name reading
   - chara_roster.lua — character roster grid: name reading, skills, teamlist (cached TextBlock refs)
-  - debug_tools.lua (F4-F8, loaded via require, remove to disable)
+  - debug_tools.lua (F3-F8, loaded via require, remove to disable). F6 story map dump + chart_actors.txt, F7 story trace, F8 marker. Trace records speech via Speech.SetListener
+- Dev tooling: helpers\Check-Lua.ps1 (luac -p + tools\luacheck.exe with .luacheckrc), run automatically by helpers\Deploy-Mod.ps1
 - Speech bridge: speech_bridge.dll (Lua C module, statically links Lua 5.4, dynamically loads UniversalSpeech.dll)
 - Speech library: UniversalSpeech.dll (pre-built 64-bit, supports NVDA/JAWS/SAPI fallback)
 - Build artifacts in: D:\games\DRAGON BALL Sparking! ZERO mod\build\

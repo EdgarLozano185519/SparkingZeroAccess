@@ -20,7 +20,9 @@ User:
 - **Game directory:** C:\Program Files (x86)\Steam\steamapps\common\DRAGON BALL Sparking! ZERO
 - **Mod framework:** UE4SS v3.0.1 (Lua mod)
 - **Speech:** UniversalSpeech via speech_bridge.dll (Lua C module)
-- **Deploy:** `powershell -ExecutionPolicy Bypass -File helpers\Deploy-Mod.ps1` after any mod file changes (retries locked files automatically). Requires UE4SS + mods.txt entry from the installer.
+- **Lua check:** `powershell -ExecutionPolicy Bypass -File helpers\Check-Lua.ps1` — `luac -p` syntax check (Lua 5.4.6 via winget `DEVCOM.Lua`, `%LOCALAPPDATA%\Programs\Lua\bin`) + `tools\luacheck.exe` lint with `.luacheckrc` (UE4SS globals declared there). Fails on syntax errors and global-variable warnings (W111-W113 = typos / missing `local`). `-Strict` fails on any warning. Deploy runs it automatically. When adding a new UE4SS global function, add it to `.luacheckrc` `read_globals`
+- **Deploy:** `powershell -ExecutionPolicy Bypass -File helpers\Deploy-Mod.ps1` after any mod file changes (runs Check-Lua first, aborts on failure; `-SkipCheck` to bypass) (retries locked files automatically; DLL lock errors while the game runs are expected, Lua files still copy). Requires UE4SS + mods.txt entry from the installer.
+- **Hot reload:** DISABLED (`EnableHotReloadSystem = 0`). Ctrl+R froze game + mod (tested 2026-09-12). Code changes require a game restart, so batch changes and ship diagnostics (story trace) with each build.
 - **Installer:** `powershell -ExecutionPolicy Bypass -File installer\build.ps1` → `build\output\`. Inno Setup 6 script: `installer\SparkingZeroAccess.iss`. Version lives in `VERSION`.
 
 # Coding Principles
@@ -68,4 +70,6 @@ Debug dumps live in the game directory: `SparkingZERO\Binaries\Win64\AE_debug\`
 - **F5** — Toggle continuous debug dump (250ms, change-only). Appends to `debug_dump.txt`. Each entry includes: focused widget + subtree text, visible widget classes, all visible text on screen. Only writes when focus or visible widgets change. File cleared on game startup, not on toggle.
 - **F3** — Battle state dump (`battle_state.txt`, `battle_gauges.txt`)
 - **F4** — Character select dump (`chara_select.txt`)
-- **F6, F7, F8** — Currently unassigned
+- **F6** — Story map structure dump (`story_map.txt`). Appends one entry per press: every visible widget tree with visibility, positions, switcher pages, bIsActive, textures, text, keyboard focus, and class properties. First press on the story map also writes `chart_actors.txt` (3D map actors + properties)
+- **F7** — Toggle story trace (`story_trace.txt`). Every 100ms logs only CHANGED values (mod state, title panel, path characters, guide bar, branch conditions, camera settle points) plus every SPEAK/QUEUE line. Best tool for play-testing: user turns it on, plays, describes what they did
+- **F8** — Numbered trace marker (spoken "Marker N"), for the user to flag moments

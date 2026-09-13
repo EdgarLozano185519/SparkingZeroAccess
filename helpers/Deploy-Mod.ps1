@@ -7,8 +7,13 @@
     the installer once before using this script.
 .PARAMETER GameDir
     Game folder (the one containing SparkingZERO.exe). Found through Steam if omitted.
+.PARAMETER SkipCheck
+    Deploy without running helpers\Check-Lua.ps1 first (syntax check + lint).
 #>
-param([string]$GameDir)
+param(
+    [string]$GameDir,
+    [switch]$SkipCheck
+)
 
 $ErrorActionPreference = 'Stop'
 
@@ -40,6 +45,15 @@ function Find-GameDir {
         if (Test-GameDir $dir) { return $dir }
     }
     return $null
+}
+
+# Catch syntax errors and misspelled variables before they cost a game restart
+if (-not $SkipCheck) {
+    $checkScript = Join-Path $PSScriptRoot 'Check-Lua.ps1'
+    & powershell -ExecutionPolicy Bypass -File $checkScript -Quiet
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Lua check failed, nothing deployed. Fix the errors above or pass -SkipCheck.'
+    }
 }
 
 if (-not $GameDir) { $GameDir = Find-GameDir }
