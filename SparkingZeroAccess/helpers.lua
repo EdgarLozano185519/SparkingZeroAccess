@@ -12,6 +12,11 @@ local Helpers = {}
 --- Check if a UObject reference is still alive.
 --- ONLY use on known UObject types (widgets, actors, components).
 --- Do NOT use on FText, FString, or other non-UObject types.
+--- LIMIT: on UE4SS 3.0.1 IsValid() reads the object's own memory, so it is
+--- only safe until the next garbage collection frees the object (then it can
+--- crash instead of returning false). objects.lua detects every GC and flushes
+--- all caches (Objects.OnFlush); a reference kept across ticks must be dropped
+--- in that flush, IsValidRef alone is not enough.
 function Helpers.IsValidRef(obj)
     if obj == nil then return false end
     local ok, valid = pcall(function() return obj:IsValid() end)

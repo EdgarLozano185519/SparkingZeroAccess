@@ -51,19 +51,26 @@ Note: LoopAsync is deprecated in UE4SS dev builds. Replacement is `LoopInGameThr
 ### Transition signals in this game
 
 - `RegisterLoadMapPreHook` / `RegisterLoadMapPostHook` fire once at startup and never again: battle maps and menus load through seamless travel or streaming, not `UEngine::LoadMap`
-- `PlayerController:ClientRestart` fires on every world change (CheatManagerEnablerMod's hook proves it), but hooking it from this mod crashed the game at startup. main.lua tracks the PlayerController object instead: when the cached one dies (`IsValid` false), the world changed
+- `PlayerController:ClientRestart` fires on every world change (CheatManagerEnablerMod's hook proves it), but hooking it from this mod crashed the game at startup. main.lua tracks the PlayerController by full name instead: its reference is dropped at every GC flush, and a controller with another name afterwards means a world change
+
+### Object lifetime on UE4SS 3.0.1 (2026-09-13, from the source and two crash dumps)
+
+- `obj:IsValid()` = remote pointer set AND `!IsUnreachable()` (reads `InternalIndex` from the object's own memory, then the object array item flags) AND the object is in UE4SS's set of live objects (`LuaUObject.cpp`, kept current by a `FUObjectDeleteListener` the engine calls for every destroyed object). It is NOT a weak-pointer check: on a freed object whose page was unmapped it crashes (`mov eax,[rax+r14]` with rax = 0xC at UE4SS.dll+0x4BAAAF). Big widgets die in batches and their pages get unmapped; a tiny plain UObject in a shared small-block page keeps readable memory, which is what objects.lua's GC sentinel relies on
+- Objects are freed only by a GC purge; the purge flags every unreachable object at the mark, unhashes them all, then frees them over one or more frames. This game collects every frame during screen transitions and about once a minute otherwise
+- `StaticFindObject(path)` on 3.0.1 is a linear search (15 ms, and it would also crash on objects in flux); `StaticConstructObject(class, outer, FName(name))` works on the game thread (used for the sentinel); `GetOuter()` works; the transient package is `GameInstance:GetOuter():GetOuter()`
+- `FindAllOf` can crash while the game streams assets (objects appear in the array before their fields are set; UE4SS.dll+0x4BDDAE IsChildOf on a garbage pointer, 2026-09-13 09:18). Keep walks rare during loads
 - The `UStruct::SuperStruct = 0x40` line in the member offsets dump identified the original crash: the async object walk called IsChildOf on a null class pointer of an object being destroyed
 
 ## UObject Lookup
 
 - `FindAllOf(className)` — returns a Lua table of all live instances of the given class. Iterates UE's GUObjectArray at the C++ level. Can cause native access violations during map transitions if objects are being destroyed. Cannot be protected by pcall (crash happens in C++ before Lua error handling). Always guard with a transition flag.
 - `FindFirstOf(className)` — returns the first non-CDO instance of the given class. Same native crash risk as FindAllOf during transitions.
-- `StaticFindObject(fullPath)` — finds a specific object by its full path. Useful for singleton lookups like DataAssets.
+- `StaticFindObject(fullPath)` — finds a specific object by its full path. Useful for singleton lookups like DataAssets. On 3.0.1 it walks all objects (15 ms), so never call it per tick.
 - `NotifyOnNewObject(className, callback)` — event-driven alternative to FindAllOf polling. Fires when a new instance of the class is constructed. Callback receives the new object. Does not iterate stale objects. Return `true` from callback to auto-unregister (one-shot).
 
 ## UObject Validation
 
-- `obj:IsValid()` — UE4SS API that checks UObject liveness via weak pointer system. Safe to call on potentially dead objects. Returns false if the object has been destroyed.
+- `obj:IsValid()` — returns false for destroyed objects only while their memory is still mapped; it reads the object itself (see "Object lifetime on UE4SS 3.0.1" above). Safe for references obtained in the same tick; across ticks only under objects.lua's GC flush protection.
 - `obj:HasAnyFlags(EObjectFlags.RF_BeginDestroyed)` — checks if the object is in the process of being destroyed. Available flags: `RF_BeginDestroyed` (0x00008000), `RF_FinishDestroyed` (0x00010000).
 - `obj:GetFullName()` — returns the full UObject path. Can crash on truly dead objects; wrap in pcall when used on cached references.
 - `obj:GetFName():ToString()` — returns the short object name. Faster than GetFullName for simple lookups.

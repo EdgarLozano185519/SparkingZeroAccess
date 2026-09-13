@@ -21,7 +21,31 @@
 - [x] Inno Setup installer replaces AccessForge (2026-09-12) — see "Distribution / Installer"
 - [x] Lua dev tooling (2026-09-12): Lua 5.4.6 (winget DEVCOM.Lua, luac -p) + tools\luacheck.exe 1.2.0 (gitignored) + .luacheckrc + helpers\Check-Lua.ps1. Deploy-Mod.ps1 runs the check first. First run found: battle.lua Battle.Reset() cleared old undeclared enemy vars instead of _enemyState, so opponent HP/KI state leaked into the next battle (fixed: _enemyState = {}; UNTESTED in battle), and allTB/allRTB scope bug in F5 dump (fixed). 28 non-blocking warnings remain (unused vars/imports, shadowing) — cleanup candidate
 
-## Session Handoff (2026-09-13) — Native speech plugin + object cache on UE4SS 3.0.1
+## Session Handoff (2026-09-13, afternoon) — Title screen fix, GC-safe registry, crash catcher
+
+Branch: `feature/pipe-speech-game-thread`, committed. Everything below is deployed to the game (mod + plugin). Verified with 4 scripted launches (helpers\Drive-Game.ps1); NOT yet played by the user.
+
+What changed and why:
+- Title screen (the reported bug): objects.lua now serves every widget blueprint class (`WBP_*`) from one `UserWidget` walk (objects indexed by class name), re-walked every 3 s in menus and on request from main.lua when nothing has keyboard focus (0.5 s after a focus loss, then every 2 s, never during transition cooldowns). "Press confirm to start", the title Start button, the main menu buttons, the roster grid and the CPU-level setting are read in the Drive-Game logs. main.lua prints `[AE] Focus: <widget> (<class>)` on every focus change now
+- Crash 1 found by the new crash catcher (09:03): AV on the game thread reading `obj+0xC` (InternalIndex) of a freed widget. UE4SS 3.0.1 `IsValid()` reads the object's own memory (source: LuaUObject.hpp: remote pointer && !IsUnreachable() && in UE4SS's live-object set), so a cached reference is only safe until the next GC. Fix: objects.lua creates a throwaway plain UObject (GC sentinel, `StaticConstructObject` with outer = transient package via `GameInstance:GetOuter():GetOuter()`) and checks its `IsValid()` first in every game-thread tick (`GT.SetTickPrologue(Objects.BeginTick)`). Sentinel invalid = GC happened: every cached reference is dropped (registry + `Objects.OnFlush` listeners: main.lua refs, GetCachedFirstOf, TeamOV/Roster caches, `Battle.InvalidateRefs`), walks pause 0.3 s, then flushed classes are walked again on demand, one per tick. The game GCs every frame during screen transitions (bursts of "garbage collection detected") and about once a minute otherwise. Game thread: avg 1.6 ms, max 66 ms per 60 s window
+- Crash 2 (09:18): AV inside `FindAllOf` (UE4SS IsChildOf on a garbage class pointer) 3.6 s after the save-data dialog, during the title load, no GC in progress. Objects are registered in the array before their fields are initialised, so walks during asset streaming carry a residual risk. Mitigation: fewer walks (no reactive walks in transition cooldowns). Not fully fixable from Lua on 3.0.1
+- Crash catcher in `speech_plugin\SparkingZeroSpeech.c`: vectored exception handler (first in line) + dumper thread with dbghelp. Logs code, address, module+offset, thread ("game thread" = main thread), 48-frame StackWalk64, UE fatal-error text (exception code 1 = `FPlatformMisc::RaiseException`, parameter 0 = GErrorHist) and the last 24 OutputDebugString lines to `plugins\SparkingZeroSpeech.log`; writes `plugins\AE_crash_<time>.dmp` (max 3/run, ~1.6 MB, readable with experiments\mdump.py). Logs "Process exiting (ExitProcess)" on normal exit. `helpers\Launch-Game.ps1` and `Drive-Game.ps1` print the exit code and new dumps in both folders
+- Exit code 3 = Unreal's `RequestExit(true)` after a fatal error: this is what the "silent exit" was. Seen once today with no exception and no "Process exiting" line, 3 s after start on the stable UE4SS build (1 of 6 launches), the same symptom the experimental build showed every time. The code-1 / debug-string capture was added after that run, so the next occurrence should show the fatal-error text
+- `StaticFindObject` on 3.0.1 is a 15 ms linear search and does not find `/Engine/Transient` by name (facts in docs/ue4ss-lua-api-reference.md, "Object lifetime")
+- 28 luacheck warnings unchanged (plus `_sentinelPath` assigned but unused: harmless)
+
+User test plan:
+1. Fresh start: startup dialogs, "Press confirm to start", Start/Quit buttons, main menu. Any stutter in menus? (each GC burst costs a few 30–60 ms ticks)
+2. A battle (F2 off/on), the result screen: any hitch during the fight (a periodic GC mid-battle now walks a few classes, one per tick)
+3. World Tournament → offline mode (the old crash). If the game dies: send `Win64\plugins\SparkingZeroSpeech.log` and the newest `Win64\plugins\AE_crash_*.dmp` name; the exit code is printed by the launch scripts only, so also note whether a crash dialog appeared
+4. Story map, shop, options as before
+
+Next steps:
+1. User test above. If a walk crash (UE4SS.dll+0x4BDDAE in the plugin log) recurs during loads: consider pausing all walks while the loading screen widget (`WBP_GRP_Title_CI_Logo_C`) is visible, or retest the experimental UE4SS build with the crash catcher (its hash lookups would remove walks entirely); a UE4SS C++ mod could expose a safe liveness check (`FUObjectDeleteListener`) if ever needed
+2. Installer: rebuild and test (plugin files), bump VERSION to 1.1.0, merge into main, tag
+3. Older backlog: story map node status, luacheck warnings, pending story map tests from 2026-09-12
+
+## Session Handoff (2026-09-13) — Native speech plugin + object cache on UE4SS 3.0.1 (superseded by the afternoon handoff above; the title screen FAIL below is fixed)
 
 Branch: `feature/pipe-speech-game-thread` (main still has the old async/speech_bridge mod, v1.0.1). Merge only after the two open problems below are fixed and tested. Branch experiment/game-thread-registry was deleted; its write-up is docs/crash-investigation-2026-09-12.md.
 

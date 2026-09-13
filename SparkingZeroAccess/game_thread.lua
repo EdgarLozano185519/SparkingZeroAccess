@@ -137,7 +137,18 @@ function GT.OnKey(key, name, fn)
     end)
 end
 
+local _prologue = nil
+
+--- fn(tickId) runs first in every tick, before keys, delayed callbacks and
+--- tasks (objects.lua's GC check, which must precede any object access).
+function GT.SetTickPrologue(fn)
+    _prologue = fn
+end
+
 local function RunTick(now)
+    if _prologue then
+        GT.Measure("TickPrologue", _prologue, _tickId)
+    end
     -- Timer events are reported here: printing on the async thread allocates
     if _timer.nativeFallback and not _reportedNativeFallback then
         _reportedNativeFallback = true

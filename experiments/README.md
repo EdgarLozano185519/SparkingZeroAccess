@@ -17,11 +17,11 @@ Tools that run without the game. Lua tests need Lua 5.4 (`winget install DEVCOM.
 
 ## In-game tests without a tester
 
-`helpers\Launch-Game.ps1` starts the game through Steam, watches the process and `UE4SS.log`, stops the game, and prints the mod's log lines. `helpers\Drive-Game.ps1` does the same and sends keys at given seconds (`"40:{ENTER}"`, SendKeys syntax) to move through menus. Game-thread crashes end the process silently (no dump, no Windows event), so "process gone, log stops" is the signal.
+`helpers\Launch-Game.ps1` starts the game through Steam, watches the process and `UE4SS.log`, stops the game, and prints the mod's log lines, the exit code and new crash dumps. `helpers\Drive-Game.ps1` does the same and sends keys at given seconds (`"40:{ENTER}"`, SendKeys syntax) to move through menus.
 
 ## Crash dumps
 
-UE4SS writes `crash_*.dmp` into `SparkingZERO\Binaries\Win64\` when a crash happens on one of its own threads. No debugger is needed to get the basics:
+UE4SS writes `crash_*.dmp` into `SparkingZERO\Binaries\Win64\` when a crash happens on one of its own threads. Game-thread crashes never reach it (Unreal's guarded main loop handles them and exits with code 3), so the speech plugin's crash catcher writes `Win64\plugins\AE_crash_*.dmp` for those and logs the stack walk in `plugins\SparkingZeroSpeech.log` (see helpers/README.md). No debugger is needed to get the basics:
 
 - `mdump.py crash_*.dmp` — exception code, faulting module and offset, registers, heuristic stack scan
 - `threadroots.py crash_*.dmp ...` — which thread crashed and its entry module (a UE4SS Lua async thread vs the game thread)

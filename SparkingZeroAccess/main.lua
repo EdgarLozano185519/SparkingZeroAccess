@@ -120,13 +120,19 @@ local function OnWidgetFocused(widget)
     if not readerEnabled then return end
 
     local name = GetWidgetName(widget)
-    if name == lastFocusedName and widget == lastFocusedWidget then return end
+    -- lastFocusedWidget == nil with a name: the reference was dropped after a
+    -- GC flush, the same widget was found again, don't announce it twice
+    if name == lastFocusedName and (widget == lastFocusedWidget or lastFocusedWidget == nil) then
+        lastFocusedWidget = widget
+        return
+    end
 
     lastFocusedName = name
     lastFocusedWidget = widget
 
     -- Check if this widget's class is suppressed
     local className = GetClassName(widget)
+    print("[AE] Focus: " .. name .. " (" .. className .. ")")
     if WR.SuppressedClasses[className] then
         return
     end
@@ -725,10 +731,16 @@ local function PollFocus()
     end
 
     focusEmptyScanStreak = focusEmptyScanStreak + 1
-    -- Focus was somewhere a moment ago and is now nowhere in the cached
-    -- widgets: a widget we have not seen yet may have it. Rate-limited inside.
-    if focusEmptyScanStreak == 12 and lastFocusedName ~= nil then
-        Objects.RequestRefresh("focus lost", false, true)
+    -- Nothing in the cached widgets has focus: a screen we have not seen yet
+    -- may have it (title buttons, a new menu). Ask for a UserWidget walk soon
+    -- after the loss and then about once a second while focus stays nowhere.
+    -- Rate-limited and ignored during battle inside objects.lua.
+    -- Not during transition cooldowns: walks while the game streams assets
+    -- are the riskiest thing this mod does (see objects.lua "SAFETY").
+    if focusEmptyScanStreak == 3 then
+        Objects.RequestWidgetRefresh("focus lost", 0.5)
+    elseif focusEmptyScanStreak % 12 == 0 and not Trackers.IsInTransition() then
+        Objects.RequestWidgetRefresh("no focus", 2.0)
     end
     -- Nothing focused
     if lastFocusedName ~= nil then
@@ -818,30 +830,55 @@ end
 
 -- World change signal: the LoadMap hooks never fire in this game (seamless
 -- travel), and a RegisterHook on PlayerController:ClientRestart killed the game
--- at startup (2026-09-13). Instead the PlayerController is tracked: every world
--- gets a new one, so the old one dying means a world change.
+-- at startup (2026-09-13). Instead the PlayerController is tracked by name:
+-- every world gets a new one. Its reference is dropped at every GC flush (the
+-- old controller is freed by that GC), and a controller with another name
+-- afterwards means a world change.
 local trackedPC = nil
+local trackedPCName = nil
+
+-- Every private UObject reference in this file is dropped here, before any
+-- code can touch a possibly freed object (see objects.lua "SAFETY").
+local function OnObjectsFlushed()
+    lastFocusedWidget = nil      -- lastFocusedName stays: found again, not re-announced
+    lastMatchedLabelWidget = nil
+    lastCaptionRef = nil
+    roomIdDigitRefs = {}
+    _cachedGameInstance = nil
+    trackedPC = nil
+    H.InvalidateCachedFirstOf()
+    TeamOV.InvalidateCache()
+    Roster.InvalidateCache()
+    Battle.InvalidateRefs()
+end
 
 local function ReaderTick()
+    -- GC check and pending registry walks first, so this tick's polls see them
+    Objects.Tick(GT.TickId())
     if trackedPC and not IsValidRef(trackedPC) then
+        -- Not expected any more (a freed controller means a GC, which flushes)
         trackedPC = nil
-        worldChanged = true
-        -- Walk again once the new world has had a moment to spawn its objects
-        Objects.RequestRefresh("world change", true, false, 1.0)
+    end
+    if not trackedPC then
+        local pc = Objects.FindFirstOf("PlayerController")
+        if pc and IsValidRef(pc) then
+            local okN, name = pcall(function() return pc:GetFullName() end)
+            name = okN and name or "?"
+            if trackedPCName ~= nil and name ~= trackedPCName then
+                worldChanged = true
+                -- Walk again once the new world has had a moment to spawn its objects
+                Objects.RequestRefresh("world change", true, false, 1.0)
+            end
+            if name ~= trackedPCName then
+                print("[AE] Tracking PlayerController: " .. name)
+            end
+            trackedPC = pc
+            trackedPCName = name
+        end
     end
     if worldChanged then
         worldChanged = false
         OnWorldChanged()
-    end
-    -- Serve pending registry refreshes first, so this tick's polls see them
-    Objects.Tick(GT.TickId())
-    if not trackedPC then
-        local pc = Objects.FindFirstOf("PlayerController")
-        if pc and IsValidRef(pc) then
-            trackedPC = pc
-            local okN, name = pcall(function() return pc:GetFullName() end)
-            print("[AE] Tracking PlayerController: " .. (okN and name or "?"))
-        end
     end
     if not readerEnabled or Trackers.IsInTransition() or not IsWorldAlive() then
         return false
@@ -931,6 +968,8 @@ else
 end
 
 Objects.Init()
+Objects.OnFlush(OnObjectsFlushed)
+GT.SetTickPrologue(Objects.BeginTick)
 
 -- Single game thread tick: reader, delayed callbacks, debug keys and loops
 GT.Start()

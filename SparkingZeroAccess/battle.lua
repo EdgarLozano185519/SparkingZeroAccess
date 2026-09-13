@@ -273,6 +273,17 @@ end
 local TIMER_INFINITE = -1  -- sentinel for no time limit
 
 --- Read the current timer value in seconds from the HUD textures.
+--- Drop every cached widget reference (called from the GC flush in objects.lua:
+--- after a garbage collection a cached reference may point at freed memory and
+--- even IsValidRef would crash). State values are kept, refs are re-acquired.
+function Battle.InvalidateRefs()
+    _timerWidget = nil
+    _timerDigitImgs = nil
+    _timerDigitParents = nil
+    _infiniteImg = nil
+    _cachedResultWidget = nil
+end
+
 --- Returns TIMER_INFINITE if no time limit, nil if reading fails.
 local function ReadTimerSeconds()
     if not _timerDigitImgs then

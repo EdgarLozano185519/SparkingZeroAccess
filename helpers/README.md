@@ -53,11 +53,13 @@ powershell -ExecutionPolicy Bypass -File helpers\Launch-Game.ps1 -Timeout 80 -La
 powershell -ExecutionPolicy Bypass -File helpers\Drive-Game.ps1 -Steps "40:{ENTER}","46:{DOWN}","49:{UP}"
 ```
 
-Game-thread crashes end the process silently: no crash dump, no Windows error event, `UE4SS.log` simply stops. The scripts report "exited=<time>" in that case. Your screen reader will speak during these runs.
+Both scripts print the process exit code when the game died on its own, and list new crash dumps from UE4SS (`Win64\crash_*.dmp`) and from the speech plugin's crash catcher (`Win64\plugins\AE_crash_*.dmp`). Exit codes seen so far: `0xC0000005` access violation, `3` = Unreal terminated itself after a fatal error (`FPlatformMisc::RequestExit(true)`; this is the former "silent exit"), `0` clean exit. The last 40 lines of the plugin log follow, with the exception, the faulting module offset and the stack walk when the game crashed. Your screen reader will speak during these runs.
 
 ## speech_plugin\build.ps1
 
 Builds `speech_plugin\SparkingZeroSpeech.asi` with MSVC (Visual Studio 2022 Build Tools + Windows SDK) or MinGW gcc, and with `-Deploy` copies it and the UniversalSpeech DLLs into the game's `Win64\plugins` folder. The plugin log is `Win64\plugins\SparkingZeroSpeech.log`.
+
+The plugin also carries the crash catcher (since 2026-09-13): a vectored exception handler that runs before Unreal's and UE4SS's handlers. On access violations, heap corruption, illegal instructions, breakpoints, stack overflow and Unreal's fatal-error exception (code 1, whose text it logs) it writes the exception code, address, module+offset, thread (marked "game thread" when it is the main thread), a 48-frame stack walk, the last OutputDebugString lines and a minidump `plugins\AE_crash_<date>_<time>.dmp` (at most 3 per run), then lets the exception continue. Read dumps with `experiments\mdump.py`. "Process exiting (ExitProcess)" at the end of the log means a normal exit; a log that ends without it and without an EXCEPTION line means TerminateProcess or a fail-fast.
 
 ## Update-CharaNames.py
 
