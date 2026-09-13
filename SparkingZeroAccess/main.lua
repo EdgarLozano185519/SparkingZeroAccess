@@ -873,6 +873,14 @@ Battle.SetResetCallback(function()
     Trackers.ArmTransitionCooldown(0.8)
 end)
 
+-- F2: battle HUD announcements on/off (not saved; on at every launch).
+-- Key bind callbacks run on the UE4SS event loop thread: no UObject access here.
+-- UE4SS key binds don't consume the key, so the game still receives F2.
+RegisterKeyBind(Key.F2, function()
+    local on = Battle.ToggleHudAnnouncements()
+    Speak(on and "Battle announcements on" or "Battle announcements off", true)
+end)
+
 -- Map transition hooks: pause polling before tear-down, reset state after load.
 -- PreHook runs before the current map starts tearing down widgets — we arm a
 -- long cooldown so both the focus and poll loops short-circuit through the

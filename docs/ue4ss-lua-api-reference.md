@@ -15,9 +15,26 @@ Critical for preventing crashes during map reloads (retry, return to menu).
 
 - `LoopAsync(delayMs, callback)` — runs callback every delayMs milliseconds on a separate Lua thread (NOT the game thread). Callback returns `false` to continue, `true` to stop the loop. Does NOT automatically stop during map transitions. All UObject access from within LoopAsync should be guarded by a transition flag or wrapped in ExecuteInGameThread.
 - `ExecuteInGameThread(callback)` — queues a callback to run on the game thread. Use for UObject access that must happen on the game thread (e.g. reading TextBlock text that fails from async context).
-- `ExecuteWithDelay(delayMs, callback)` — one-shot delayed execution on the game thread.
+- `ExecuteWithDelay(delayMs, callback)` — one-shot delayed execution on the mod's async thread, the same thread as LoopAsync. NOT the game thread (verified in v3.0.1 LuaMod.cpp).
 
-Note: LoopAsync is deprecated in UE4SS dev builds. Replacement is `LoopInGameThreadWithDelay(delayMs, callback)` which returns a handle supporting `CancelDelayedAction(handle)`, `PauseDelayedAction(handle)`, `UnpauseDelayedAction(handle)`, `IsDelayedActionActive(handle)`.
+Note: LoopAsync is deprecated in UE4SS dev builds. Replacement is `LoopInGameThreadWithDelay(delayMs, callback)` (not in v3.0.1) which returns a handle supporting `CancelDelayedAction(handle)`, `PauseDelayedAction(handle)`, `UnpauseDelayedAction(handle)`, `IsDelayedActionActive(handle)`.
+
+### Verified threading (RE-UE4SS v3.0.1 src/Mod/LuaMod.cpp, 2026-09-12)
+
+- `LoopAsync` / `ExecuteWithDelay`: each Lua mod has one async thread (wakes every 5 ms). The Lua call holds no lock
+- `ExecuteInGameThread`: queued, then run on the game thread inside a ProcessEvent pre-callback. Never call it from code already running as a game thread action: UE4SS iterates the action list while running actions, so appending corrupts it
+- `RegisterKeyBind`: callbacks run on the UE4SS event loop thread (under `m_thread_actions_mutex`), not the game thread
+- `RegisterHook` on native UFunctions (e.g. `TextBlock:SetText`): callback on the game thread, no lock
+- `NotifyOnNewObject`: callback runs on the thread that constructs the object, loading threads included. Matches subclasses
+- All of these share one Lua state, which is not thread-safe
+- `FindAllOf` / `FindFirstOf` with `bUseUObjectArrayCache = false` walk every object: about 45 ms each on this game (measured on the game thread). `bUseUObjectArrayCache = true` did not make them faster
+- `FindAllOf` returns nil when nothing is found; `FindFirstOf` returns an object wrapper (check `IsValid`)
+- Crash dumps from the World Tournament crash and all fix attempts: branch experiment/game-thread-registry
+
+### Experimental UE4SS builds (checked 2026-09-12, not usable yet)
+
+- Adds `LoopInGameThreadWithDelay`, `ExecuteInGameThreadWithDelay`, `ExecuteInGameThreadAfterFrames`, `IsInGameThread`, engine tick scheduling, NotifyOnNewObject callbacks queued to the game thread, FUObjectHashTables lookups
+- Its bundled Lua 5.4.7 is modified (`lua_lock` → `LuaLock`), and UE4SS exports no Lua C API, so `speech_bridge.dll` (static vanilla Lua) makes the game close at startup
 
 ## UObject Lookup
 
@@ -36,7 +53,7 @@ Note: LoopAsync is deprecated in UE4SS dev builds. Replacement is `LoopInGameThr
 ## Hook Registration
 
 - `RegisterHook(ufunctionPath, callback)` — hooks a UFunction. Callback receives (self, ...). Fires whenever the function is called by the engine. Active globally, including during map transitions. Use with caution for hooks that access UObjects in their callback.
-- `RegisterKeyBind(Key.XX, callback)` — binds a key press to a callback. Runs in the Lua async context.
+- `RegisterKeyBind(Key.XX, callback)` — binds a key press to a callback. Runs on the UE4SS event loop thread, not the game thread. Does not consume the key.
 
 ## Actor/Gameplay Hooks
 

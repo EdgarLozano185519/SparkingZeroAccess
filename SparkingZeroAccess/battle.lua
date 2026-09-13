@@ -38,6 +38,11 @@ local _lastPawnPath = nil       -- track pawn identity for character switch dete
 local _inBattle = false         -- are we in an active battle
 local _battleWasActive = false  -- set when HUD first reads; survives Reset() for post-battle polls
 
+-- F2 toggle (main.lua). Off = PollHUD keeps tracking but says nothing, so
+-- turning it back on doesn't replay changes that happened while silent.
+-- Not saved: every launch starts with announcements on.
+local _hudAnnouncementsOn = true
+
 -- Timer state
 local _timerWidget = nil        -- cached WBP_Rep_TimeCount_C (SSBattleTimer)
 local _timerDigitImgs = nil     -- cached {[2]=IMG hundreds, [1]=IMG tens, [0]=IMG ones}
@@ -313,9 +318,24 @@ end
 
 -- === BATTLE HUD POLLING ===
 
+local function Silent() end
+
+--- Toggle in-battle HUD announcements: timer, HP, KI, Sparking, skill points,
+--- and enemy gauges. The result screen is not affected.
+--- Returns true when announcements are now on.
+function Battle.ToggleHudAnnouncements()
+    _hudAnnouncementsOn = not _hudAnnouncementsOn
+    print("[AE] Battle HUD announcements " .. (_hudAnnouncementsOn and "on" or "off"))
+    return _hudAnnouncementsOn
+end
+
 --- Poll battle HUD values and announce significant changes.
 --- Called from the 100ms poll loop.
 function Battle.PollHUD(Speak, SpeakQueued)
+    if not _hudAnnouncementsOn then
+        Speak, SpeakQueued = Silent, Silent
+    end
+
     local pawn = GetPlayerPawn()
     if not pawn then
         -- Pawn briefly nil during animations/events — don't reset tracking state.

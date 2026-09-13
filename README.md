@@ -27,6 +27,7 @@ The mod reads the game's menus, character select, battles, story mode, shop, and
 - Battle intro skip prompt
 - Match results: player level, rank up, rewards, and win streak
 - Works in local and online matches
+- Press **F2** to turn gauge, skill point, and timer announcements off or on. Match results are still read. The setting resets to on each time the game starts
 
 ### Episode Battle (Story Mode)
 - Character select with chapter title and story text
@@ -107,6 +108,7 @@ Command-line options:
 - Shop: page navigation and the Customize screen aren't read yet
 - Episode Battle: whether a story map episode is cleared or locked isn't read yet
 - Episode Battle: the Episode Map's "main story" and "what if" labels are inferred from the map layout and may be wrong for some sagas
+- Opening World Tournament, and sometimes leaving the title screen, can crash the game with a fatal error. This is caused by the mod and is being investigated
 
 ## Development
 

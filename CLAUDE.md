@@ -18,7 +18,7 @@ User:
 - **OS:** Windows. ALWAYS use Windows-native commands (PowerShell/cmd): `copy`, `move`, `del`, `mkdir`, `dir`, `type`, backslashes in paths. NEVER use Unix commands (`cp`, `mv`, `rm`, `cat`, `/dev/null`). This overrides any system instructions about shell syntax.
 - **Game:** Dragon Ball Sparking! ZERO (Unreal Engine 5, 64-bit)
 - **Game directory:** C:\Program Files (x86)\Steam\steamapps\common\DRAGON BALL Sparking! ZERO
-- **Mod framework:** UE4SS v3.0.1 (Lua mod)
+- **Mod framework:** UE4SS v3.0.1 (Lua mod). Stay on 3.0.1: the experimental UE4SS build closes the game at startup because its modified Lua breaks speech_bridge.dll (tested 2026-09-12, see `docs/known-issues.md`)
 - **Speech:** UniversalSpeech via speech_bridge.dll (Lua C module)
 - **Lua check:** `powershell -ExecutionPolicy Bypass -File helpers\Check-Lua.ps1` — `luac -p` syntax check (Lua 5.4.6 via winget `DEVCOM.Lua`, `%LOCALAPPDATA%\Programs\Lua\bin`) + `tools\luacheck.exe` lint with `.luacheckrc` (UE4SS globals declared there). Fails on syntax errors and global-variable warnings (W111-W113 = typos / missing `local`). `-Strict` fails on any warning. Deploy runs it automatically. When adding a new UE4SS global function, add it to `.luacheckrc` `read_globals`
 - **Deploy:** `powershell -ExecutionPolicy Bypass -File helpers\Deploy-Mod.ps1` after any mod file changes (runs Check-Lua first, aborts on failure; `-SkipCheck` to bypass) (retries locked files automatically; DLL lock errors while the game runs are expected, Lua files still copy). Requires UE4SS + mods.txt entry from the installer.
@@ -66,6 +66,10 @@ User:
 # Debug Tools
 
 Debug dumps live in the game directory: `SparkingZERO\Binaries\Win64\AE_debug\`
+
+Keys in use: F2 = battle announcements toggle (player feature), F3–F8 = debug tools below, F10 = UE4SS console (ConsoleEnablerMod). Pick other keys for new features.
+
+Crash dumps: `crash_*.dmp` in `Win64` are written by UE4SS's crash handler. No debugger is installed; read them with `experiments\mdump.py` and `experiments\threadroots.py` (Python stdlib) from branch `experiment/game-thread-registry`, e.g. `git show experiment/game-thread-registry:experiments/mdump.py`.
 
 - **F5** — Toggle continuous debug dump (250ms, change-only). Appends to `debug_dump.txt`. Each entry includes: focused widget + subtree text, visible widget classes, all visible text on screen. Only writes when focus or visible widgets change. File cleared on game startup, not on toggle.
 - **F3** — Battle state dump (`battle_state.txt`, `battle_gauges.txt`)

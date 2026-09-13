@@ -23,6 +23,38 @@
 - [x] Inno Setup installer replaces AccessForge (2026-09-12) — see "Distribution / Installer"
 - [x] Lua dev tooling (2026-09-12): Lua 5.4.6 (winget DEVCOM.Lua, luac -p) + tools\luacheck.exe 1.2.0 (gitignored) + .luacheckrc + helpers\Check-Lua.ps1. Deploy-Mod.ps1 runs the check first. First run found: battle.lua Battle.Reset() cleared old undeclared enemy vars instead of _enemyState, so opponent HP/KI state leaked into the next battle (fixed: _enemyState = {}; UNTESTED in battle), and allTB/allRTB scope bug in F5 dump (fixed). 28 non-blocking warnings remain (unused vars/imports, shadowing) — cleanup candidate
 
+## Session Handoff (2026-09-12, late) — World Tournament Crash Investigation + F2 Toggle
+
+Summary:
+- Crash when opening World Tournament (also title → main menu): the Win64\crash_*.dmp files are written by UE4SS's crash handler. The readable dumps show access violations inside UE4SS.dll on the mod's LoopAsync thread, never on the game thread. The mod's async polling reads widgets while the game frees them on screen changes that are not map loads, so the LoadMap pause does not cover them
+- Four fixes tried and parked on branch experiment/game-thread-registry (full write-up in that branch's project_status.md, "Crash Investigation"; dump readers and offline tests in its experiments\ folder):
+  1. All polling on the game thread (LoopAsync timer + ExecuteInGameThread): no new crashes, but every FindAllOf/FindFirstOf walks all objects (~45 ms each), game much slower
+  2. bUseUObjectArrayCache = true: lookups still slow, loading very slow. Keep false
+  3. NotifyOnNewObject registry instead of walks: game closed to desktop more often (on UE4SS 3.0.1 those callbacks run Lua on loading threads)
+  4. UE4SS experimental build (engine tick scheduling, callbacks queued to the game thread): game closes at startup, because its bundled Lua is modified with thread locks and speech_bridge.dll (static vanilla Lua) breaks. UE4SS exports no Lua C API, so speech on it would need a UE4SS C++ mod
+- Restored: UE4SS 3.0.1 (backup build\backup\ue4ss-3.0.1, hash-verified) and the last committed mod, plus the F2 toggle
+- New: F2 turns battle HUD announcements (timer, HP, KI, Sparking, skill points, enemy gauges) off/on, spoken "Battle announcements off/on". Not saved (on at every launch). Tracking continues silently while off, so nothing is replayed. Result screen unaffected
+- Verified UE4SS threading facts added to docs/ue4ss-lua-api-reference.md
+
+Test results (user, 2026-09-12, restored build):
+- [x] Game starts and reads as before (UE4SS 3.0.1 restored)
+- [x] F2 off in battle works (log "Battle HUD announcements off"); the result screen was still read afterwards
+- [ ] F2 back on: new gauge changes announced again (not tried yet) — ask when continuing
+- [ ] F2 in menus: the game does nothing unexpected (not confirmed) — ask when continuing
+- World Tournament still crashes the restored build (fatal error). Dump crash_2026_09_13_03_52_46.dmp: ACCESS_VIOLATION reading 0x40 at UE4SS.dll+0x4BDDAE on the mod's LoopAsync thread (thread entry UE4SS.dll+0x39528F), the same crash address as the original 2026-09-13 00:38 dump. It came 23 s after the result screen was read (log 03:52:23, dump 03:52:46 UTC)
+
+Next steps (user decides):
+1. World Tournament crash. Options: (a) narrow mitigation on UE4SS 3.0.1: find what opening World Tournament does to widgets (e.g. an F6 dump right before opening it, UE4SS.log timing) and pause polling around that transition; (b) move speech to a UE4SS C++ mod, then switch to a newer UE4SS where the experiment branch's game thread design can work
+2. Story map node status (cleared / locked), from the previous handoff below
+3. Clean up the 28 non-blocking luacheck warnings
+The older pending tests in the previous handoff below (story map paths, Episode Map, Details popup, F6/F7/F8, battle Reset fix) are still unanswered.
+
+Tools and local files:
+- Crash dump reader: experiments\mdump.py and threadroots.py on branch experiment/game-thread-registry (git show experiment/game-thread-registry:experiments/mdump.py). Python 3 stdlib only; no debugger is installed
+- Branch experiment/game-thread-registry is local only (not pushed)
+- Not in git (build\ is ignored): build\backup\ue4ss-3.0.1 (UE4SS 3.0.1 backup: dwmapi.dll, UE4SS.dll, UE4SS-settings.ini, Mods), build\cache\UE4SS_v3.0.1-1133-gb4cefa18.zip (experimental UE4SS, SHA-256 89B7EED47C37D6FF6EAA144A41311A75098279A3454777F4EDD2446CEA1EA7A8), build\stage\ue4ss-experimental-* (extracted copy)
+- VERSION unchanged (1.0.1); F2 is not in a release yet
+
 ## Session Handoff (2026-09-12) — Story Map Accessibility + Dev Tooling
 
 Done this session:
@@ -412,7 +444,7 @@ Follow-ups:
 - UniversalSpeech reports "JAWS" as detected engine even when NVDA is active (cosmetic, speech works correctly through NVDA)
 - UE4SS GUI debug window disabled (GuiConsoleVisible=0) for accessibility
 - Team slot character names not readable (see investigation notes above)
-- Crash dumps generated frequently by the game (pre-existing, not mod-related) — `crash_*.dmp` in Win64 directory
+- Crash dumps `crash_*.dmp` in the Win64 directory are written by UE4SS's crash handler. The 2026-09-12 dumps ARE mod-related: LoopAsync polling races with widget destruction on screen changes (World Tournament, title screen). Not fixed yet, see "Session Handoff (2026-09-12, late)"
 
 ## Architecture
 - UE4SS Lua mod: SparkingZeroAccess (Mods/SparkingZeroAccess/Scripts/)
