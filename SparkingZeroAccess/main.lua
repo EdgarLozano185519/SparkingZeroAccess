@@ -39,6 +39,7 @@ local Battle = require("battle")
 local EpisodeBattle = require("episode_battle")
 local EpisodeMap = require("episode_map")
 local Shop = require("shop")
+local Customize = require("customize")
 
 -- === FOCUS TRACKING ===
 
@@ -127,12 +128,16 @@ local function OnWidgetFocused(widget)
         return
     end
 
+    -- Diagnostic: the same widget announced twice after a GC means something
+    -- cleared lastFocusedName in between (seen 2026-09-13 on the customize picker)
+    local previousName = lastFocusedName
     lastFocusedName = name
     lastFocusedWidget = widget
 
     -- Check if this widget's class is suppressed
     local className = GetClassName(widget)
-    print("[AE] Focus: " .. name .. " (" .. className .. ")")
+    print("[AE] Focus: " .. name .. " (" .. className .. ")"
+        .. (previousName == nil and " previous=nil" or ""))
     if WR.SuppressedClasses[className] then
         return
     end
@@ -296,6 +301,23 @@ local function OnWidgetFocused(widget)
     if Shop.IsShopDialog(widget) then
         Shop.OnShopDialogFocused(widget)
         lastSpokenLabel = "shop_dialog"
+        return
+    end
+
+    -- === CUSTOMIZE (top menu, ability item slots, item picker) ===
+    local customizeContext = Customize.HitButtonContext(widget)
+    if customizeContext then
+        local context = "customize_" .. customizeContext
+        local firstEntry = (lastScreenContext ~= context)
+        lastScreenContext = context
+        Customize.OnHitButtonFocused(widget, customizeContext, firstEntry)
+        lastSpokenLabel = context
+        return
+    end
+    if Customize.IsSlot(widget) then
+        lastScreenContext = "customize_slot"
+        Customize.OnSlotFocused(widget)
+        lastSpokenLabel = "customize_slot"
         return
     end
 
@@ -643,6 +665,7 @@ local function PollFocus()
     -- Transition cooldown: dialog just dismissed or map loading
     if os.clock() < Trackers.transitionCooldownUntil then
         if lastFocusedWidget then
+            print("[AE] Focus cleared: transition cooldown")
             lastFocusedWidget = nil
             lastFocusedName = nil
             lastSpokenLabel = nil
@@ -657,6 +680,7 @@ local function PollFocus()
         if not IsValidRef(lastFocusedWidget) then
             -- Widget destroyed — clear refs, fall through to slow path
             -- No cooldown needed: IsValid() caught it safely
+            print("[AE] Focus cleared: widget invalid")
             lastFocusedWidget = nil
             lastFocusedName = nil
             lastSpokenLabel = nil
@@ -771,6 +795,7 @@ local function ResetStaleState()
     Roster.InvalidateCache()
     EpisodeBattle.Reset()
     Shop.Reset()
+    Customize.Reset()
 end
 
 -- Quick world liveness check — if this fails, we're in a transition.
@@ -922,6 +947,7 @@ Trackers.Init(Speak, SpeakQueued)
 EpisodeBattle.Init(Speak, SpeakQueued)
 EpisodeMap.Init(Speak, SpeakQueued)
 Shop.Init(Speak, SpeakQueued)
+Customize.Init(Speak, SpeakQueued)
 Battle.Init()
 Battle.SetResetCallback(function()
     print("[AE] Result screen reset triggered")

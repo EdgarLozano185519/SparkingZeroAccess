@@ -21,6 +21,39 @@
 - [x] Inno Setup installer replaces AccessForge (2026-09-12) — see "Distribution / Installer"
 - [x] Lua dev tooling (2026-09-12): Lua 5.4.6 (winget DEVCOM.Lua, luac -p) + tools\luacheck.exe 1.2.0 (gitignored) + .luacheckrc + helpers\Check-Lua.ps1. Deploy-Mod.ps1 runs the check first. First run found: battle.lua Battle.Reset() cleared old undeclared enemy vars instead of _enemyState, so opponent HP/KI state leaked into the next battle (fixed: _enemyState = {}; UNTESTED in battle), and allTB/allRTB scope bug in F5 dump (fixed). 28 non-blocking warnings remain (unused vars/imports, shadowing) — cleanup candidate
 
+## Session Handoff (2026-09-13, night) — Customize screens (ability items)
+
+VERIFIED by the user (2026-09-13): slots, the picker and the equip flow all read correctly. Released as v1.2.0 (VERSION bumped, installer rebuilt in build\output, commit tagged v1.2.0 and pushed; the GitHub Release itself is created by the manual Release workflow with version 1.2.0, or by uploading build\output by hand). Module `customize.lua`, wired in main.lua before the shop branch (`Customize.HitButtonContext` → "top" / "picker", `Customize.IsSlot`). Shop sold-out and multi-line descriptions from the evening handoff were confirmed by the user; the first customize build read picker items correctly (log: "Master Roshi Training", "Rush Attack Boost 1").
+
+Structure (F6 dumps: top menu with HitButton_1/2 and Hit_Category_1/2 focused, picker with HitButton_03/05/13/11; the slots screen was NOT dumped):
+- All customize screens focus invisible `WBP_OBJ_Common_HitButton_C` widgets; their `RemoteButton` property is the visible widget they drive; the owning dialog is in the hit button's full path. Before this module the generic reader spoke "Common hit 1" / "Common category 1"
+- Top menu `WBP_GRP_BS_Custom_00_DP_C` (Text_Title "Customize"; character name = Text_Name in `WBP_GRP_BS_Custom_NameSet_DP_C`): `HitButton_0..6` → `WBP_OBJ_BS_ItemIcon_S_N` ability item slots (no text; `TextureResourceObject` is `T_UI_ItemFrame_Empty_Icon` or the item's icon texture; switcher `Swich` 0 Normal / 1 SetOn / 2 Lock / 3 Disable); `Hit_Category_0..5` → `WBP_OBJ_BS_BTN_C_category_NN` (bound `caption`: Outfits, CPU Settings, Emote, Fusion, Sparking! BGM, Taunt; `WidgetSwitcher_88` 1 = disabled). Spoken: "Customize, <name>" on entry, then "Ability item slot N, <item|item set|empty>[, locked|unavailable][, new]" or "<category>[, unavailable][, new]"
+- Slots screen: `WBP_OBJ_BS_Custom_MS_ItemName_0..6` focused directly (seen only in the log). `OnSlotFocused` speaks "Slot N, <first readable text>" or empty/locked (`WidgetSwitcher_109` guessed from the right panel's `WBP_OBJ_BS_Custom_ItemName_C`) and logs every text block inside the slot (`[AE] Customize slot ...`)
+- Picker `WBP_GRP_BS_Custom_Item_DP_C` (Text_Title "Ability Items", description TextBlock_0..4 one line each): `HitButton_00..14` → `WBP_OBJ_BS_ItemIcon_M_NN` (Txt_ItemName, `Swich` states as above, `WBP_OBJ_Com_NewIcon_M`), 3 columns, the view scroll recycles 15 icons (no "x of y"). Spoken: title on entry, "<item>[, equipped|locked|unavailable][, new]", description, stat changes, "cost N, M of 7 points used" (only when non-zero; the gauge showed 0 selected while an item was focused, so the "Select" state may never appear at focus time)
+- Right panel `WBP_GRP_BS_Custom_Item_R_C`: `WBP_OBJ_BS_Custom_Chart.ChartValueInterpolateTo` = current stats, `ChartValueAfterInterpolateTo` = preview with the focused item (5 floats HP/Attack/Ki/Agility/Special Attack, 0–5; confirmed in the log: Master Roshi Training HP 3.5→3.8, Rush Attack Boost 1 Attack 4.4→4.5). Spoken as "HP 3.5 to 3.8" for every stat that differs. `Item_Sp_0..6` `WidgetSwitcher_SP` 1 = Select, 2 = SetOn
+- Item names for the top-menu slot icons come from a texture→name map that the picker fills (every named icon on screen, strings only): "item set" until the picker has shown that item
+- GC re-fire (open): every garbage collection re-announced the focused hit button, and in that tick `FindAllOf("TextBlock")` returned nil (registry walk budget), so the first build spoke the raw widget name. Now every customize reader gives up quietly on a nil registry. Why `lastFocusedName` is cleared is not yet known: main.lua now logs `previous=nil` on the Focus line and "[AE] Focus cleared: ..." where PollFocus clears it. The shop showed the same repeat ("Energy Saver 2, sold out" three times)
+
+User test plan:
+1. Customize top menu: "Customize, <character>" then each slot ("Ability item slot 1, empty" ...) and the category buttons by name
+2. Open a slot → slots screen: what is spoken per slot? Press F6 once there (picker closed) so the slot widget can be documented
+3. Picker: item, description, stat change ("HP 3.5 to 3.8"), then equip one; reopen and check "equipped"; go back to the top menu and check the slot now says the item name
+4. Wait a minute on any screen: if the focused item is repeated, send the log lines around "[AE] Focus cleared" / "previous=nil"
+## Session Handoff (2026-09-13, evening) — Shop item state (sold out / sale / not enough Zeni)
+
+Found with four F6 dumps on the ability-item grid (two purchased, two unpurchased items; one purchase happened between dumps 3 and 4). VERIFIED in UE4SS.log of the user's next run: purchased ability items, characters and outfits all log `sold out (price page 4)`; the L-type icons have `WidgetSwitcher_Price` and `IMG_Check` but no stock switcher (`stock nil`). "not enough Zeni", "on sale" and "owned" (Check overlay) are still unseen.
+
+Second fix, same session (deployed, untested): item descriptions were cut after the first line. The shop panel splits the description into one TextBlock per line, `TXT_Detail_00` through `TXT_Detail_07` (unused lines Collapsed); `ReadDescription` now joins every visible line in order (e.g. Melee Charge 3: "Greatly reduces the charging time for Smash Attacks and Rush Chains."). Needs a game restart.
+
+- Indicator: `WidgetSwitcher_Price` on `WBP_OBJ_SH_ItemIcon_S00_C` (bound variable) has 5 pages: 0 Enable (plain price), 1 Sale, 2 MoneyShortage, 3 SaleAndShortage, 4 SoldOut ("SOLD OUT" text replaces the price). A purchased one-off ability item sits on page 4 and its `WidgetSwitcher_Item` on page 1 (`TXT_Stock_Num_0` = "1"). The "Stock" overlay (TXT_Stock_Label "Available" + count), the "Check" overlay (IMG_Check) and "NewIcon" were Collapsed on every ability item; the L-type icons (characters/outfits/voices) were not dumped
+- shop.lua: `ReadItemState` reads the price page, the Check and Stock overlays (walking up from the bound children `IMG_Check` / `WidgetSwitcher_StockNum`, since the overlays themselves are not bound). Announcement: `<name>, sold out` / `<name>, on sale, <sale price> Zeni, was <price>` / `<name>, <price> Zeni`, plus `not enough Zeni`, `owned` (Check shown), `Available N` (Stock shown). The state is part of the dedup key, so after buying, the focus returning to the item speaks it again as sold out. Log line: `[AE] Shop item: ... (price page N, check X, stock Y)`
+- The old TXT_Shortage_Guide note below (cannot detect sold-out) is superseded
+
+User test plan:
+1. Ability items: an unpurchased item reads name + price; a purchased one reads "sold out"; buy one and confirm the item is re-read as sold out after the dialog closes
+2. An item costing more than the balance should add "not enough Zeni" (page 2). If the shop has a sale, check the "on sale" wording and which of the two numbers is the real price (guess: `TXT_PriceNum_Sale_0` is the new price, `TXT_PriceNum_1` the struck-out old one)
+3. Descriptions: Melee Charge 3 and other multi-line descriptions should be read completely
+4. Voices grid: not seen in the log yet; the UE4SS.log line above shows what was read
 ## Session Handoff (2026-09-13, afternoon) — Title screen fix, GC-safe registry, crash catcher
 
 Branch: `feature/pipe-speech-game-thread`, merged into `main` on 2026-09-13 (user decision) with VERSION bumped to 1.1.0; not tagged and not pushed, the installer is not rebuilt yet (see Next steps). Everything below is deployed to the game (mod + plugin). Verified with 4 scripted launches (helpers\Drive-Game.ps1); NOT yet played by the user. Docs refreshed and the retired `speech_bridge\` source removed in the same session.
@@ -42,7 +75,7 @@ User test plan:
 
 Next steps:
 1. User test above. If a walk crash (UE4SS.dll+0x4BDDAE in the plugin log) recurs during loads: consider pausing all walks while the loading screen widget (`WBP_GRP_Title_CI_Logo_C`) is visible, or retest the experimental UE4SS build with the crash catcher (its hash lookups would remove walks entirely); a UE4SS C++ mod could expose a safe liveness check (`FUObjectDeleteListener`) if ever needed
-2. Installer: rebuild (`installer\build.ps1`) and test with the plugin files, then tag v1.1.0 and push main (or run the Release workflow, which builds and publishes)
+2. (done in the night session as v1.2.0) Installer: rebuild (`installer\build.ps1`) and test with the plugin files, then tag and push main (or run the Release workflow, which builds and publishes)
 3. Older backlog: story map node status, luacheck warnings, pending story map tests from 2026-09-12
 
 ## Session Handoff (2026-09-13) — Native speech plugin + object cache on UE4SS 3.0.1 (superseded by the afternoon handoff above; the title screen FAIL below is fixed)
@@ -258,8 +291,9 @@ Next steps:
 - [x] Shop: Zeni balance — announced on first entry
 - [x] Shop: purchase dialog — header, item, price, balance after, button label (tracks header for dedup)
 - [x] Shop: purchase complete dialog — detected via header text change
+- [x] Shop: item state — sold out / on sale / not enough Zeni from WidgetSwitcher_Price page, owned (Check overlay), stock count (2026-09-13; sold out verified on S and L icons, sale/shortage/owned unseen)
 - [ ] Shop: page navigation — pager items visible but not yet announced
-- [ ] Shop: customize screen — not yet explored
+- [x] Customize screens: top menu, ability item slots, item picker with stat preview (customize.lua, 2026-09-13, verified)
 - [ ] Episode Battle: consecutive path nodes (UNTESTED fix 2026-09-12) — only signal is ChartTitle WBP_OBJ_AI_OtherCharaIcon_N portrait textures (e.g. Piccolo saga ch.2: Frieza 4th Form -> Goku (Super)). Path announced on entry + on portrait signature change: "Path", characters, conditions. Portrait meaning unconfirmed
 - [ ] Debug: F7 story trace + F8 markers + chart_actors.txt (UNTESTED 2026-09-12) — verify trace output, then use chart_actors.txt to find node cleared/locked state
 - [ ] Episode Battle: story map "Close" (Square) toggle — outline panel visibility toggle, not yet handled
@@ -366,7 +400,7 @@ Source: community Google Sheet, auto-updated via `uv run scripts/Update-CharaNam
   - WBP_OBJ_SH_BTN_Shop_C / WBP_OBJ_SH_BTN_Customize_C — via WidgetLabels
 - **Main panel:** WBP_GRP_SH_Main_00_C
   - TXT_ShopName, TXT_CategoryName, TXT_Detail_00 (description), TXT_Money (Zeni balance)
-  - TXT_Shortage_Guide_0/1 — static labels, NOT per-item (cannot detect sold-out)
+  - TXT_Shortage_Guide_0/1 — static labels, NOT per-item. Per-item state lives in the icon's WidgetSwitcher_Price (page 4 = SOLD OUT), see the 2026-09-13 evening handoff
   - WBP_OBJ_SH_Custom: Text_00-04 — stat labels (HP, Attack, Ki, Agility, Special Attack)
 - **Item grids:**
   - S-type (small, ability items): WBP_GRP_SH_Main_S00_C → WBP_OBJ_SH_ItemIcon_S00_C through S19
@@ -546,7 +580,7 @@ Follow-ups:
   - skill_list.lua — Explanation of Controls overlay: skill name, button combo, cost, description
   - episode_battle.lua — Episode Battle (story mode): char select, story map, path nodes (portrait signature), cutscene skip
   - episode_map.lua — Episode Battle popups: Details (team/condition/rewards), Recap, Episode Map overlay (polled before PollStoryMap, pauses node announcements while open)
-  - shop.lua — Shop: item grid (S/L types), categories, purchase dialogs, Zeni balance
+  - shop.lua — Shop: item grid (S/L types), item state (sold out / sale / shortage), multi-line descriptions, categories, purchase dialogs, Zeni balance
   - battle.lua — battle HUD: HP/KI/Sparking announcements, opponent tracking, intro skip
   - team_overview.lua — team setup screen: slot navigation, bubble name reading
   - chara_roster.lua — character roster grid: name reading, skills, teamlist (cached TextBlock refs)

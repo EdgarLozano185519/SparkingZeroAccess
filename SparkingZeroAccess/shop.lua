@@ -12,6 +12,16 @@
       - Detail: TXT_Detail_00 (description), TXT_CategoryName, TXT_Money
       - Categories: WBP_OBJ_SH_BTN_Category_00 through _06
       - Pages: WBP_OBJ_SH_Pager_Item_1 through _5
+
+    Item state (F6 dump of WBP_OBJ_SH_ItemIcon_S00_C, 2026-09-13):
+      - WidgetSwitcher_Price pages: 0 Enable (plain price), 1 Sale,
+        2 MoneyShortage, 3 SaleAndShortage, 4 SoldOut ("SOLD OUT" replaces
+        the price). A purchased one-off item flips to page 4 and its
+        WidgetSwitcher_Item to page 1
+      - Overlay "Stock" (TXT_Stock_Label "Available" + TXT_Stock_Num_0),
+        Overlay "Check" (IMG_Check) and Overlay "NewIcon" are Collapsed on
+        every ability item seen so far; read when shown, since the L-type
+        icons (characters/outfits) may use them
 ]]
 
 local H = require("helpers")
@@ -33,6 +43,15 @@ local _lastItemNameOnly = nil  -- just the name without price, for dedup
 local _lastCategory = nil
 local _announcedEntry = false
 local _lastDialogHeader = nil
+
+-- WidgetSwitcher_Price pages (see header comment)
+local PRICE_PAGE_SALE = { [1] = true, [3] = true }
+local PRICE_PAGE_SHORTAGE = { [2] = true, [3] = true }
+local PRICE_PAGE_SOLDOUT = 4
+
+-- ESlateVisibility values that hide a widget
+local VIS_COLLAPSED = 1
+local VIS_HIDDEN = 2
 
 -- === DETECTION ===
 
@@ -63,6 +82,17 @@ local function ReadItemFromWidget(widget)
 
     local itemName = nil
     local price = nil
+    local salePrice = nil   -- TXT_PriceNum_Sale_0 (Sale page; TXT_PriceNum_1 next to it is the struck-out old price)
+    local stockNum = nil    -- TXT_Stock_Num_0 (count shown in the "Stock" overlay)
+
+    -- Template price "99,999,999,000" contains commas, real prices do not
+    local function RealPrice(tb)
+        local ok2, text = pcall(function() return tb:GetText():ToString() end)
+        if ok2 and text and text ~= "" and not text:find(",", 1, true) then
+            return text
+        end
+        return nil
+    end
 
     for _, tb in ipairs(textBlocks) do
         local ok, tbPath = pcall(function() return tb:GetFullName() end)
@@ -80,18 +110,91 @@ local function ReadItemFromWidget(widget)
                     end
                 end
             elseif tbName == "TXT_PriceNum_0" and not price then
+                price = RealPrice(tb)
+            elseif tbName == "TXT_PriceNum_Sale_0" and not salePrice then
+                salePrice = RealPrice(tb)
+            elseif tbName == "TXT_Stock_Num_0" and not stockNum then
                 local ok2, text = pcall(function() return tb:GetText():ToString() end)
-                if ok2 and text and text ~= "" then
-                    -- Skip template price "99,999,999,000" (contains commas)
-                    if not text:find(",", 1, true) then
-                        price = text
-                    end
-                end
+                if ok2 and text and text ~= "" then stockNum = text end
             end
         end
     end
 
-    return itemName, price
+    return itemName, price, salePrice, stockNum
+end
+
+-- Active page of a WidgetSwitcher that is a bound variable of the widget
+local function GetSwitcherIndex(widget, propName)
+    local sw = TryGetProperty(widget, propName)
+    if not sw or not IsValidRef(sw) then return nil end
+    local idx = TryCall(sw, "GetActiveWidgetIndex")
+    return type(idx) == "number" and idx or nil
+end
+
+-- Whether the nearest ancestor of `child` named `name` is shown (not
+-- Collapsed/Hidden). The item icon's "Stock" and "Check" overlays are not
+-- bound variables, but their children are, so walk up from those.
+-- Returns nil when the ancestor is not found.
+local function NamedAncestorShown(child, name)
+    if not child or not IsValidRef(child) then return nil end
+    local w = child
+    for _ = 1, 6 do
+        local ok, parent = pcall(function() return w:GetParent() end)
+        if not ok or not parent or not IsValidRef(parent) then return nil end
+        if GetWidgetName(parent) == name then
+            local vis = TryCall(parent, "GetVisibility")
+            if type(vis) ~= "number" then return nil end
+            return vis ~= VIS_COLLAPSED and vis ~= VIS_HIDDEN
+        end
+        w = parent
+    end
+    return nil
+end
+
+-- Purchase / price state of the focused item icon (see header comment).
+-- Every field is nil when the icon has no such widget (e.g. an L-type icon
+-- with a different layout), so callers fall back to the plain price.
+local function ReadItemState(widget)
+    local pricePage = GetSwitcherIndex(widget, "WidgetSwitcher_Price")
+    local state = {
+        pricePage = pricePage,
+        soldOut = pricePage == PRICE_PAGE_SOLDOUT,
+        sale = pricePage ~= nil and PRICE_PAGE_SALE[pricePage] == true,
+        shortage = pricePage ~= nil and PRICE_PAGE_SHORTAGE[pricePage] == true,
+        checkShown = NamedAncestorShown(TryGetProperty(widget, "IMG_Check"), "Check"),
+        stockShown = NamedAncestorShown(TryGetProperty(widget, "WidgetSwitcher_StockNum"), "Stock"),
+        stockLabel = nil,
+    }
+    if state.stockShown then
+        local ok, text = pcall(function() return widget.TXT_Stock_Label:GetText():ToString() end)
+        if ok and text and text ~= "" then state.stockLabel = text end
+    end
+    return state
+end
+
+-- Spoken form of name + price + state, following what the icon shows
+local function BuildItemAnnouncement(itemName, price, salePrice, stockNum, state)
+    local parts = { itemName }
+    if state.soldOut then
+        table.insert(parts, "sold out")
+    elseif state.sale and salePrice then
+        table.insert(parts, "on sale, " .. salePrice .. " Zeni")
+        if price and price ~= salePrice then
+            table.insert(parts, "was " .. price)
+        end
+    elseif price then
+        table.insert(parts, price .. " Zeni")
+    end
+    if state.shortage then
+        table.insert(parts, "not enough Zeni")
+    end
+    if state.checkShown then
+        table.insert(parts, "owned")
+    end
+    if state.stockShown and stockNum then
+        table.insert(parts, (state.stockLabel or "Held") .. " " .. stockNum)
+    end
+    return table.concat(parts, ", ")
 end
 
 -- Read text from a named TextBlock inside WBP_GRP_SH_Main_00_C
@@ -114,11 +217,38 @@ local function ReadMainPanelText(tbName)
     return nil
 end
 
--- Read detail description from the main shop panel
+-- Read the item description from the main shop panel. The game splits it
+-- into one TextBlock per line, TXT_Detail_00 through TXT_Detail_07 (unused
+-- lines are Collapsed), so collect every shown line in order and join them.
 local function ReadDescription()
-    local desc = ReadMainPanelText("TXT_Detail_00")
-    if desc and desc ~= "Shop" then return desc end
-    return nil
+    local textBlocks = FindAllOf("TextBlock")
+    if not textBlocks then return nil end
+
+    local lines = {}
+    for _, tb in ipairs(textBlocks) do
+        local idx = GetWidgetName(tb):match("^TXT_Detail_(%d+)$")
+        if idx and not lines[tonumber(idx)] then
+            local ok, tbPath = pcall(function() return tb:GetFullName() end)
+            if ok and tbPath:find("WBP_GRP_SH_Main_00_C", 1, true)
+               and tbPath:find("Transient", 1, true)
+               and TryCall(tb, "IsVisible") then
+                local ok2, text = pcall(function() return tb:GetText():ToString() end)
+                if ok2 and text and text ~= "" then
+                    lines[tonumber(idx)] = text:gsub("[\r\n]+", " "):gsub("%s+", " ")
+                end
+            end
+        end
+    end
+
+    local ordered = {}
+    for i = 0, 15 do
+        if lines[i] then table.insert(ordered, lines[i]) end
+    end
+    if #ordered == 0 then return nil end
+
+    local desc = table.concat(ordered, " ")
+    if desc == "Shop" then return nil end
+    return desc
 end
 
 -- Read current category name
@@ -151,7 +281,8 @@ function Shop.OnItemFocused(widget)
     local firstEntry = not _announcedEntry
 
     -- Read item info
-    local itemName, price = ReadItemFromWidget(widget)
+    local itemName, price, salePrice, stockNum = ReadItemFromWidget(widget)
+    local state = ReadItemState(widget)
 
     _lastDialogHeader = nil
 
@@ -170,10 +301,9 @@ function Shop.OnItemFocused(widget)
     end
 
     if itemName then
-        local announcement = itemName
-        if price then
-            announcement = announcement .. ", " .. price .. " Zeni"
-        end
+        -- The state is part of the dedup key, so a purchase (focus returns to
+        -- the same item, now sold out) is announced again
+        local announcement = BuildItemAnnouncement(itemName, price, salePrice, stockNum, state)
 
         if announcement ~= _lastItemName or firstEntry then
             _lastItemName = announcement
@@ -183,7 +313,9 @@ function Shop.OnItemFocused(widget)
             else
                 Speak(announcement, true)
             end
-            print("[AE] Shop item: " .. announcement)
+            print(string.format("[AE] Shop item: %s (price page %s, check %s, stock %s)",
+                announcement, tostring(state.pricePage), tostring(state.checkShown),
+                tostring(state.stockShown)))
 
             -- Queue description (skip if it repeats the item name or is a useless fragment)
             local desc = ReadDescription()

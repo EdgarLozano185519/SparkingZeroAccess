@@ -39,7 +39,7 @@ The mod reads the game's menus, character select, battles, story mode, shop, and
 - Cutscene narration and skip prompts
 
 ### Shop
-- Item names and prices, followed by descriptions
+- Item names and prices, followed by full descriptions; sold-out, on-sale, and unaffordable items are announced as such
 - Category tabs and Zeni balance
 - Purchase and purchase complete dialogs
 
@@ -107,7 +107,7 @@ Command-line options:
 - The control style selector is a full-screen overlay without keyboard focus, so it isn't read
 - Character select: costume and form selection, sort and filter, and team presets aren't read yet
 - Battle: the health bar count and transformation count aren't announced yet
-- Shop: page navigation and the Customize screen aren't read yet
+- Shop: page navigation isn't read yet; in Customize, only the ability items are read (outfits, CPU settings, emotes and BGM aren't yet)
 - Episode Battle: whether a story map episode is cleared or locked isn't read yet
 - Episode Battle: the Episode Map's "main story" and "what if" labels are inferred from the map layout and may be wrong for some sagas
 - Opening World Tournament (offline mode) crashed the game in versions up to 1.0.1 and in the first main-thread builds. Two causes were found and fixed on 2026-09-13 (see [docs/known-issues.md](docs/known-issues.md)); a retest of World Tournament is pending. If the game closes, `Win64\plugins\SparkingZeroSpeech.log` and the newest `Win64\plugins\AE_crash_*.dmp` show what happened
@@ -129,7 +129,7 @@ Command-line options:
   - `battle.lua` — battle HUD: HP, KI, Sparking, opponent tracking, match results
   - `episode_battle.lua` — Episode Battle: character select, story map, path nodes, cutscenes
   - `episode_map.lua` — Episode Battle popups: Details, Recap, and the Episode Map overlay
-  - `shop.lua` — shop: item grid, categories, purchase dialogs
+  - `shop.lua` — shop: item grid and item state, categories, purchase dialogs
   - `team_overview.lua` — team setup: slot navigation, character names
   - `chara_roster.lua` — character roster: grid names, skills
   - `chara_names.lua` — texture ID to character name and DP lookup table
