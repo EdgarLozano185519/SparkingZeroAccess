@@ -5,8 +5,10 @@
     reader DLLs itself: UE4SS exports no Lua C API, and newer UE4SS builds ship
     a modified Lua that breaks a statically linked C module (speech_bridge.dll,
     removed 2026-09-12). Instead every announcement is written as one line to
-    the named pipe \\.\pipe\SparkingZeroAccess. The Sparking Zero Access NVDA
-    add-on (nvda-addon\) serves that pipe and speaks the lines.
+    the named pipe \\.\pipe\SparkingZeroSpeech. The native plugin
+    speech_plugin\SparkingZeroSpeech.asi (loaded from Win64\plugins by the
+    Ultimate ASI Loader) serves that pipe inside the game process and speaks
+    the lines through UniversalSpeech (NVDA, JAWS, SAPI).
 
     Line format, UTF-8, "\n" terminated:
         "!" .. text   speak now, interrupting current speech
@@ -48,7 +50,7 @@ local function Connect()
         err = tostring(err)
         if err ~= _openErrorLogged then
             _openErrorLogged = err
-            print("[AE] Speech pipe not available (" .. err .. "). Start NVDA with the Sparking Zero Access add-on; retrying every " .. RETRY_SECONDS .. " s")
+            print("[AE] Speech pipe not available (" .. err .. "). Is plugins\\SparkingZeroSpeech.asi installed? Retrying every " .. RETRY_SECONDS .. " s")
         end
         return false
     end

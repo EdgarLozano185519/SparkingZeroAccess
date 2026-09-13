@@ -1,4 +1,4 @@
--- luacheck config for SparkingZeroAccess (UE4SS experimental / 3.0.1, Lua 5.4)
+-- luacheck config for SparkingZeroAccess (UE4SS 3.0.1, Lua 5.4)
 -- Run via: powershell -ExecutionPolicy Bypass -File helpers\Check-Lua.ps1
 
 std = "lua54"

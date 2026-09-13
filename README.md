@@ -2,7 +2,7 @@
 
 A screen reader accessibility mod for **DRAGON BALL: Sparking! ZERO** on PC (Steam).
 
-The mod reads the game's menus, character select, battles, story mode, shop, and online lobbies aloud through NVDA. It follows keyboard and controller focus and announces important changes, without altering gameplay or overriding game controls.
+The mod reads the game's menus, character select, battles, story mode, shop, and online lobbies aloud through your screen reader (NVDA, JAWS, or Windows SAPI). It follows keyboard and controller focus and announces important changes, without altering gameplay or overriding game controls.
 
 ## Features
 
@@ -53,30 +53,29 @@ The mod reads the game's menus, character select, battles, story mode, shop, and
 ## Requirements
 
 - DRAGON BALL: Sparking! ZERO (Steam, PC)
-- NVDA 2019.3 or newer, with the Sparking Zero Access NVDA add-on (see Installation). Other screen readers are not supported yet: the game mod cannot load screen reader libraries itself, so it sends its text to the add-on over a named pipe
+- A screen reader: NVDA (recommended), JAWS, or Windows SAPI. Nothing needs to be installed into the screen reader
 - Windows 10 or later (64-bit)
 
 ## Installation
 
 ### Installer (Recommended)
 
-1. Download `SparkingZeroAccess-Setup-<version>.exe` and `SparkingZeroAccess-<version>.nvda-addon` from the [Releases page](https://github.com/EdgarLozano185519/SparkingZeroAccess/releases).
-2. Install the NVDA add-on: with NVDA running, press Enter on the `.nvda-addon` file, confirm the installation, and restart NVDA when asked. The add-on has no settings; it waits for the game and speaks what the mod sends.
-3. Close the game, run the installer, and accept the Windows administrator prompt.
-4. The installer finds the game through Steam, including Steam libraries on other drives. If it can't, press Browse and choose the game folder, the one that contains `SparkingZERO.exe`.
-5. Finish the wizard and start the game. On the title screen you should hear "Press confirm to start".
+1. Download `SparkingZeroAccess-Setup-<version>.exe` from the [Releases page](https://github.com/EdgarLozano185519/SparkingZeroAccess/releases).
+2. Close the game, run the installer, and accept the Windows administrator prompt.
+3. The installer finds the game through Steam, including Steam libraries on other drives. If it can't, press Browse and choose the game folder, the one that contains `SparkingZERO.exe`.
+4. Finish the wizard and start the game. On the title screen you should hear "Press confirm to start".
 
 The installer sets up everything the mod needs in the game folder:
-- UE4SS mod loader, configured for this game
+- UE4SS v3.0.1 mod loader, configured for this game
 - UTOC Signature Bypass, which lets the game load mods
+- The speech plugin in `plugins\`, which talks to your screen reader
 - The mod itself, enabled in `Mods\mods.txt`. Other UE4SS mods listed there are kept.
 
 ### Manual Installation
 
-1. Install the NVDA add-on as described above.
-2. Download `SparkingZeroAccess-<version>-manual.zip` from the [Releases page](https://github.com/EdgarLozano185519/SparkingZeroAccess/releases).
-3. Extract it into `SparkingZERO\Binaries\Win64\` inside the game folder, replacing existing files.
-4. Start the game. On the title screen you should hear "Press confirm to start".
+1. Download `SparkingZeroAccess-<version>-manual.zip` from the [Releases page](https://github.com/EdgarLozano185519/SparkingZeroAccess/releases).
+2. Extract it into `SparkingZERO\Binaries\Win64\` inside the game folder, replacing existing files.
+3. Start the game. On the title screen you should hear "Press confirm to start".
 
 The zip contains its own `Mods\mods.txt`, which replaces yours. If you use other UE4SS mods, enable them in that file again.
 
@@ -97,7 +96,7 @@ Command-line options:
 
 ## Troubleshooting
 
-- **No speech in game:** NVDA with the add-on must be running; the mod reconnects by itself every few seconds, so starting NVDA later is fine. In NVDA, the add-on shows up under Tools, Add-on store, Installed add-ons as "Sparking Zero Access speech"; you can also assign a key to its "Reports whether the Sparking Zero Access game mod is connected" script in Input Gestures. On the game side, open `UE4SS.log` in `SparkingZERO\Binaries\Win64\` and search for `[AE]`: `[AE] Speech pipe connected` means the mod reached NVDA; `[AE] Speech pipe not available` means the add-on is not running.
+- **No speech in game:** start your screen reader before the game. Then check `SparkingZERO\Binaries\Win64\plugins\SparkingZeroSpeech.log`: it should say "UniversalSpeech loaded", "Pipe server ready" and "Game connected". In `UE4SS.log` in `Win64\`, search for `[AE]`: `[AE] Speech pipe connected` means the mod reached the plugin; `[AE] Speech pipe not available` means the plugin did not load (is `plugins\SparkingZeroSpeech.asi` there, next to `DBSparkingZeroUTOCBypass.asi`?).
 - **The installer can't find the game:** press Browse and select the game folder. It contains `SparkingZERO.exe` and a folder named `SparkingZERO`.
 
 ## Known Issues
@@ -110,7 +109,8 @@ Command-line options:
 - Shop: page navigation and the Customize screen aren't read yet
 - Episode Battle: whether a story map episode is cleared or locked isn't read yet
 - Episode Battle: the Episode Map's "main story" and "what if" labels are inferred from the map layout and may be wrong for some sagas
-- Versions up to 1.0.1 could crash the game with a fatal error when opening World Tournament or leaving the title screen. The current version reads the game only on its main thread to fix this; confirmation from testing is still pending
+- Opening World Tournament (offline mode) still crashes the game. Versions up to 1.0.1 crashed from reading the game off its main thread; the current development version reads only on the main thread, but this crash remains and is being investigated
+- Development version: the title screen ("Press confirm to start" and the Start/Quit buttons) may not be read after a fresh start. Known cause, fix pending
 
 ## Development
 
@@ -119,8 +119,9 @@ Command-line options:
 - `SparkingZeroAccess/` — the Lua mod, installed to `Mods\SparkingZeroAccess\Scripts`
   - `main.lua` — orchestrator: focus tracking, keybinds, init
   - `game_thread.lua` — runs all mod work on the game thread: `GT.Every`, `GT.After`, `GT.OnKey`, timing logs
+  - `objects.lua` — cached `FindAllOf` / `FindFirstOf` per class: rare object walks, one per frame at most, none during battle
   - `helpers.lua` — TryCall, TryGetProperty, GetWidgetName, IsValidRef
-  - `speech.lua` — Speak and SpeakQueued over the named pipe to the NVDA add-on
+  - `speech.lua` — Speak and SpeakQueued over the named pipe to the speech plugin
   - `widget_reader.lua` — text reading, widget matching, label resolution
   - `poll_trackers.lua` — dialog, help window, screen change, and room polling
   - `icon_parser.lua` — RichText icon markup to readable text
@@ -133,7 +134,7 @@ Command-line options:
   - `chara_names.lua` — texture ID to character name and DP lookup table
   - `skill_list.lua` — skill list overlay reading
   - `debug_tools.lua` — debug dumps and the story trace (F3 to F8)
-- `nvda-addon/` — the NVDA add-on: `manifest.ini` and `globalPlugins/sparkingZeroAccess.py`, a named pipe server that speaks what the mod sends
+- `speech_plugin/` — the speech plugin: `SparkingZeroSpeech.c` (named pipe server + UniversalSpeech, built to `SparkingZeroSpeech.asi` by `build.ps1`) and the screen reader libraries `UniversalSpeech.dll`, `nvdaControllerClient.dll`, `ZDSRAPI.dll`, all installed to `Win64\plugins`
 - `experiments/` — offline tests (speech pipe, game thread scheduler) and crash dump readers, see [experiments/README.md](experiments/README.md)
 - `speech_bridge/` — the retired Lua C module for UniversalSpeech, kept for reference, see [speech_bridge/README.md](speech_bridge/README.md)
 - `installer/` — Windows installer
@@ -150,14 +151,14 @@ Command-line options:
 
 ### How It Works
 
-All of the mod's work runs on the game's main thread: `game_thread.lua` registers a tick with UE4SS's `LoopInGameThreadWithDelay` (about 60 times a second) and runs the focus poll on every tick and the slower polls (dialogs, battle HUD, story map, shop) in rotating groups. Reading game objects from another thread raced with the game freeing them and crashed it, which is why the older `LoopAsync` design was replaced. When focus moves to a new widget:
+All of the mod's work runs on the game's main thread: `game_thread.lua` queues a tick about 60 times a second with UE4SS's `ExecuteInGameThread` and runs the focus poll on every tick and the slower polls (dialogs, battle HUD, story map, shop) in rotating groups. Reading game objects from another thread raced with the game freeing them and crashed it, which is why the older `LoopAsync` design was replaced. Because every UE4SS object lookup walks all objects (about 50 ms), `objects.lua` caches the results per class and walks at most one class per frame, never during a battle. When focus moves to a new widget:
 
 1. **Fast path:** check the `WidgetLabels` table for known widget names
 2. **Screen-specific handlers:** character select, team overview, skill list, room ID input, and others have dedicated handlers
 3. **Generic path:** read widget text through the `caption` property or child TextBlocks
 4. **Slow fallback:** a `FindAllOf("TextBlock")` scan filtered by widget path
 
-Speech leaves the game over a named pipe: `speech.lua` opens `\\.\pipe\SparkingZeroAccess` with Lua's file functions and writes one line per announcement (`!` prefix interrupts, `+` prefix queues). The NVDA add-on owns the pipe and speaks the lines through NVDA. The mod itself loads no screen reader DLLs, so it works on UE4SS builds that ship a modified Lua.
+Speech goes through a named pipe inside the game process: `speech.lua` opens `\\.\pipe\SparkingZeroSpeech` with Lua's file functions and writes one line per announcement (`!` prefix interrupts, `+` prefix queues). `SparkingZeroSpeech.asi`, a small native plugin loaded by the same ASI loader as the UTOC bypass, owns the pipe and speaks the lines through UniversalSpeech. The Lua mod itself loads no DLLs, so it does not depend on UE4SS's Lua build.
 
 ### Deploying Changes
 
@@ -193,19 +194,19 @@ powershell -ExecutionPolicy Bypass -File installer\build.ps1
 
 The script downloads UE4SS v3.0.1 (checked against a pinned SHA256 hash), applies the UE4SS settings the mod needs, and writes `SparkingZeroAccess-Setup-<version>.exe` and `SparkingZeroAccess-<version>-manual.zip` to `build\output\`. The version comes from the `VERSION` file.
 
-Note: development currently runs on the experimental UE4SS build, installed with `helpers\Switch-UE4SS.ps1 -Build experimental` (see [helpers/README.md](helpers/README.md)). The installer will switch to that build once it is confirmed in testing.
+The installer also copies the speech plugin from `speech_plugin\` into `plugins\`.
 
-### Building the NVDA Add-on
+### Building the Speech Plugin
 
 ```
-powershell -ExecutionPolicy Bypass -File helpers\Build-NvdaAddon.ps1
+powershell -ExecutionPolicy Bypass -File speech_plugin\build.ps1 -Deploy
 ```
 
-Writes `build\output\SparkingZeroAccess-<version>.nvda-addon`. To test the pipe without the game, run `experiments\Test-SpeechPipe.ps1` (it needs Python 3 and Lua 5.4, and NVDA's copy of the add-on must not be running).
+Compiles `speech_plugin\SparkingZeroSpeech.c` with MSVC (Visual Studio 2022 Build Tools with the Windows SDK; MinGW gcc works too) and, with `-Deploy`, copies the plugin and the UniversalSpeech DLLs into the game's `Win64\plugins` folder. The built `.asi` is committed, so the installer can be built without a compiler.
 
 ### Releasing
 
-Run the **Release** workflow from the GitHub Actions tab with a version number. It updates `VERSION`, builds the installer and manual zip, and publishes both to a GitHub release. The NVDA add-on is not built by the workflow yet; build it locally and attach it to the release.
+Run the **Release** workflow from the GitHub Actions tab with a version number. It updates `VERSION`, builds the installer and manual zip, and publishes both to a GitHub release.
 
 ### Debug Tools
 
@@ -227,10 +228,11 @@ When DLC characters are added to the game, `chara_names.lua` needs their texture
 ## Credits and Licenses
 
 Sparking Zero Access bundles these third-party components. Full license texts are in [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt), and the installer places a copy in `Mods\SparkingZeroAccess\`.
-- [UE4SS](https://github.com/UE4SS-RE/RE-UE4SS) — MIT License
-- [UTOC Signature Bypass Patch](https://www.nexusmods.com/dragonballsparkingzero/mods/18) by DeathChaos
-
-Speech is delivered by the project's own NVDA add-on through NVDA's API; no screen reader libraries are bundled.
+- [UE4SS](https://github.com/UE4SS-RE/RE-UE4SS) v3.0.1 — MIT License
+- [UniversalSpeech](https://github.com/qtnc/UniversalSpeech) by Quentin Cosendey — MIT License
+- NVDA Controller Client by [NV Access](https://www.nvaccess.org) — LGPL 2.1
+- ZDSR API (`ZDSRAPI.dll`), distributed with UniversalSpeech
+- [UTOC Signature Bypass Patch](https://www.nexusmods.com/dragonballsparkingzero/mods/18) by DeathChaos, whose `dsound.dll` is the [Ultimate ASI Loader](https://github.com/ThirteenAG/Ultimate-ASI-Loader) by ThirteenAG (MIT License)
 
 The installer is built with [Inno Setup](https://jrsoftware.org/isinfo.php).
 

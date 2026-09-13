@@ -11,30 +11,45 @@
 
 ## Setup Status
 - [x] Game installed and first-run complete
-- [x] UE4SS: experimental build UE4SS_v3.0.1-1133-gb4cefa18 installed since 2026-09-12 (helpers\Switch-UE4SS.ps1; 3.0.1 backup in build\backup\ue4ss-3.0.1). UNTESTED with the pipe speech mod
+- [x] UE4SS v3.0.1 installed in SparkingZERO\Binaries\Win64 (helpers\Switch-UE4SS.ps1 -Build stable restores it from build\backup\ue4ss-3.0.1). Experimental builds kill this game, see docs/known-issues.md
 - [x] UTOC Signature Bypass installed (dsound.dll + plugins\DBSparkingZeroUTOCBypass.asi)
 - [x] UE4SS settings configured (bUseUObjectArrayCache=false, GraphicsAPI=dx11)
 - [ ] Hot reload — tried 2026-09-12, Ctrl+R froze game + mod. Disabled again (EnableHotReloadSystem=0). Likely cause: LoopAsync loops / native hooks / speech DLL not surviving mod restart. Restart game after deploys
 - **Controller:** user plays with a DualShock 4
-- [x] Speech: named pipe to the NVDA add-on (nvda-addon\, installed in %APPDATA%\nvda\addons\SparkingZeroAccess) since 2026-09-12. speech_bridge.dll + UniversalSpeech/NVDA client/ZDSR DLLs retired. Offline pipe test passes; UNTESTED in game
+- [x] Speech: native plugin Win64\plugins\SparkingZeroSpeech.asi (+ UniversalSpeech.dll, nvdaControllerClient.dll, ZDSRAPI.dll there) serving the pipe \\.\pipe\SparkingZeroSpeech since 2026-09-13; speech.lua writes to it. speech_bridge.dll retired. Confirmed working in game
 - [x] SparkingZeroAccess Lua mod created and registered in mods.txt
 - [x] Inno Setup installer replaces AccessForge (2026-09-12) — see "Distribution / Installer"
 - [x] Lua dev tooling (2026-09-12): Lua 5.4.6 (winget DEVCOM.Lua, luac -p) + tools\luacheck.exe 1.2.0 (gitignored) + .luacheckrc + helpers\Check-Lua.ps1. Deploy-Mod.ps1 runs the check first. First run found: battle.lua Battle.Reset() cleared old undeclared enemy vars instead of _enemyState, so opponent HP/KI state leaked into the next battle (fixed: _enemyState = {}; UNTESTED in battle), and allTB/allRTB scope bug in F5 dump (fixed). 28 non-blocking warnings remain (unused vars/imports, shadowing) — cleanup candidate
 
-## IN PROGRESS (2026-09-13, early morning) — native speech plugin + object registry on UE4SS 3.0.1
+## Session Handoff (2026-09-13) — Native speech plugin + object cache on UE4SS 3.0.1
 
-User feedback: the experimental UE4SS build did not start the game, and NO NVDA add-on (users should not have to install one). Direction: option 3, native code.
+Branch: `feature/pipe-speech-game-thread` (main still has the old async/speech_bridge mod, v1.0.1). Merge only after the two open problems below are fixed and tested. Branch experiment/game-thread-registry was deleted; its write-up is docs/crash-investigation-2026-09-12.md.
 
-Verified by launching the game from scripts (Launch-Game.ps1 in the session scratchpad, Steam URL + log watching):
-- Experimental UE4SS (gb4cefa18) kills the game ~3 s after mods start EVEN WITH THE MOD DISABLED, no dump, no Windows error (game-thread crash inside UE's guarded main = silent exit). Unusable on this game. Restored 3.0.1 (Switch-UE4SS -Build stable)
-- Speech now: `speech_plugin\SparkingZeroSpeech.asi` (plain C, MSVC, built by speech_plugin\build.ps1 -Deploy) loaded by the Ultimate ASI Loader (dsound.dll, already installed for the UTOC bypass) from Win64\plugins\, together with UniversalSpeech.dll + nvdaControllerClient.dll + ZDSRAPI.dll there. It serves the pipe `\\.\pipe\SparkingZeroSpeech` (speech.lua renamed to match) and speaks via UniversalSpeech. Log: plugins\SparkingZeroSpeech.log. WORKS (game connected, startup dialogs and "Press confirm to start" logged). NVDA add-on removed from the repo and from %APPDATA%\nvda\addons
-- 3.0.1 + game_thread.lua (LoopAsync + ExecuteInGameThread fallback) + plugin: game ran 110 s, no crash, but the reader tick averages 36 ms (max 210) because every poll does a FindAllOf walk (47–50 ms each on the game thread)
-- Probes (game thread, title screen, 811 live UserWidgets of 1624): FindAllOf(UserWidget) 47 ms; GetFullName 3 µs/obj; IsVisible / HasKeyboardFocus 7 µs/obj (6 ms per full scan); IsValid ~0; only 6 widgets visible. BindWidget properties work: `widget.RichText_MainTalk` returns the child widget directly (unknown property returns an invalid UObject, check IsValid)
-- Dead ends on 3.0.1: UFunctions with out params (GetAllWidgetsOfClass, GetViewportSize...) are broken in 3.0.1's Lua (out-param table stays on the stack, array out params never pushed); NotifyOnNewObject runs Lua unlocked on the constructing thread; zDEV-UE4SS_v3.0.1.zip has no C++ SDK (UE4SS.dll does export LuaType/LuaMadeSimple/Hook symbols, so a C++ mod remains possible with a generated import lib and repo headers)
-- Game-owned widget refs found: SSBattlePlayerController.TextAreaUi / TextAreaUiMainMenu (speech bubble WBP_OBJ_Common_TexWin_Black_C) / TextAreaUiMainMenuSet / GuideWidget / PauseManager / MenuGeneralDialog / HelpDialog / PlayerInfoWidget ... (most nil on the title screen); SSMenuManager base class has LastFocusedWidget; GameInstance has MenuInterruptManager, NotificationManager, WaitingIconManager
-- Plan being implemented: objects.lua registry (one FindAllOf("Widget") + FindAllOf("Actor") walk at startup, after PlayerController:ClientRestart, on explicit request, or on a miss rate-limited to 3 s and never while battle is busy); FindAllOf/FindFirstOf globals overridden in main.lua to serve from the cache
+User decisions this session: no NVDA add-on ever (users must not install anything into the screen reader); option 3 = native code. The user could not test the experimental UE4SS build (game did not start).
 
-## Session Handoff (2026-09-12, night) — Pipe Speech + Game Thread on Experimental UE4SS (SUPERSEDED, see above)
+What is deployed in the game now (and committed):
+- UE4SS 3.0.1 (restored with helpers\Switch-UE4SS.ps1 -Build stable). The experimental build (UE4SS_v3.0.1-1133-gb4cefa18) kills the game ~3 s after the mods start even with SparkingZeroAccess disabled in mods.txt: silent exit, no dump, no Windows event. Dead end
+- Speech: `speech_plugin\SparkingZeroSpeech.asi` (C, MSVC, `speech_plugin\build.ps1 -Deploy`), loaded by the Ultimate ASI Loader (the bypass's dsound.dll) from Win64\plugins together with UniversalSpeech.dll, nvdaControllerClient.dll, ZDSRAPI.dll. It owns `\\.\pipe\SparkingZeroSpeech`; speech.lua writes `!text` / `+text` lines to it with plain io. Works (plugin log: plugins\SparkingZeroSpeech.log; UE4SS.log "[AE] Speech pipe connected"). NVDA add-on deleted from the repo and from %APPDATA%\nvda\addons. Installer .iss and build.ps1 now include the plugin files (installer NOT rebuilt/tested)
+- Game thread: game_thread.lua (LoopAsync timer + ExecuteInGameThread on 3.0.1, LoopInGameThreadWithDelay path kept with a fallback), one reader tick (focus every tick, slow polls in rotating groups). No RegisterHook in the mod: hooking PlayerController:ClientRestart killed the game at startup twice. World change = tracked PlayerController dies (main.lua ReaderTick) → OnWorldChanged (the LoadMap hooks never fire in this game)
+- objects.lua: main.lua overrides the FindAllOf/FindFirstOf globals with a per-class cache. A class is walked when first queried and when stale (world change: all; "focus lost" or explicit request: widget classes; a miss on a class that had objects: after 3 s; never had objects: after 60 s; idle safety: 30 s). At most one walk per tick, none in the first 5 s after mod start, none while battle.lua marks the registry busy (SetBusy at first HUD reading; cleared on HP empty / time over / result screen / reset / 5 s without a pawn). Walking "Widget" or "Actor" killed the game, so only the mod's own class names are walked. Result: reader tick avg 0.7–1.4 ms (was 36 ms), max = one walk (28–50 ms, 136–150 ms while the game loads)
+- Test tooling: helpers\Launch-Game.ps1 and helpers\Drive-Game.ps1 (start the game through Steam, watch UE4SS.log, send keys, stop). Used for ~12 launches this session. The user's screen reader speaks during runs
+
+User test result (2026-09-13, this build):
+- FAIL: "Press confirm to start" and the title Start/Quit buttons were not read after a fresh start. Log shows why: the title classes (WBP_GRP_Title_CI_Logo_C, WBP_Title_C, PressAnyButton via PollScreenChanges) were walked during loading with 0 objects → marked absent → next walk only after 60 s; UserWidget was walked at 5 s (631 objects) and once more during loading (1072), so the title buttons created later were never in the cache and focus was never found (the "focus lost" trigger needs a previous focus). Fix: in menus (not busy) walk stale/absent widget classes on a steady cadence (e.g. round-robin, one walk per second; a 45 ms hitch is harmless for a blind player outside battle), re-walk when PollScreenChanges sees a new screen or when the focus scan finds nothing for ~1 s, and don't count walks made during loading (first ~25 s) as real "absent"
+- FAIL: World Tournament → offline mode still crashes the game: silent exit ~1 min after start, no dump, no Windows event, log stops right after "walked WBP_MainMenu_Base_C". So the crash is on the game thread inside UE's guarded main loop (UE4SS's dumper never sees it). Next step for evidence: make the speech plugin install a vectored exception handler (AddVectoredExceptionHandler) that writes a minidump with MiniDumpWriteDump (dbghelp) on access violations / heap corruption (0xC0000374 was seen once in a probe run), then read it with experiments\mdump.py. Also try: run World Tournament with the mod disabled in mods.txt (does 3.0.1 + plugin alone survive?) and with the reader disabled (readerEnabled=false) to split "our Lua" from "UE4SS 3.0.1 itself"
+- OK: startup dialogs, main menu reached, quit dialog read, speech through the plugin, no stutter reported
+
+Next steps:
+1. Fix the title screen regression in objects.lua (see above), verify with helpers\Drive-Game.ps1 (Enter at 40 s should reach the title buttons; add the F7 trace or a print in OnWidgetFocused to see focus announcements in the log)
+2. World Tournament crash: add crash dumping to the plugin, bisect with mod off / reader off, read the dump
+3. Rebuild and test the installer (plugin files added), then bump VERSION (1.1.0), merge into main, tag
+4. Older backlog: story map node status, luacheck warnings (28), pending story map tests from 2026-09-12
+
+Key measurements and facts are in docs/ue4ss-lua-api-reference.md ("Measured on UE4SS 3.0.1") and docs/known-issues.md.
+
+## Session Handoff (2026-09-12, night) — Pipe Speech + Game Thread on Experimental UE4SS (OBSOLETE)
+
+Kept for history only. Everything below about the NVDA add-on and the experimental UE4SS build was reverted on 2026-09-13; see the handoff above.
 
 Branch: `feature/pipe-speech-game-thread` (not merged into main until the in-game test passes). Everything below is deployed to the game and to NVDA already; nothing has been run in the game yet.
 
@@ -493,14 +508,15 @@ Follow-ups:
 - UniversalSpeech reports "JAWS" as detected engine even when NVDA is active (cosmetic, speech works correctly through NVDA)
 - UE4SS GUI debug window disabled (GuiConsoleVisible=0) for accessibility
 - Team slot character names not readable (see investigation notes above)
-- Crash dumps `crash_*.dmp` in the Win64 directory are written by UE4SS's crash handler. The 2026-09-12 dumps ARE mod-related: LoopAsync polling races with widget destruction on screen changes (World Tournament, title screen). Fix (all polling on the game thread, experimental UE4SS) deployed 2026-09-12 night, UNTESTED, see "Session Handoff (2026-09-12, night)"
+- Crash dumps `crash_*.dmp` in the Win64 directory are written by UE4SS's crash handler, but only for crashes on UE4SS's own threads. Game-thread crashes exit silently (no dump, no Windows event). The 2026-09-12 dumps were the async polling race; the World Tournament crash persists on the game-thread build (2026-09-13), see "Session Handoff (2026-09-13)"
 
 ## Architecture
 - UE4SS Lua mod: SparkingZeroAccess (Mods/SparkingZeroAccess/Scripts/)
   - main.lua — orchestrator: focus tracking, keybinds, init, RegisterLoadMapPostHook; one reader tick on the game thread (focus every tick + rotating slow poll groups)
-  - game_thread.lua — GT.Every / GT.After / GT.OnKey scheduler on the game thread (LoopInGameThreadWithDelay on experimental UE4SS, LoopAsync + ExecuteInGameThread fallback on 3.0.1), slow task and 60 s timing logs
+  - game_thread.lua — GT.Every / GT.After / GT.OnKey scheduler on the game thread (LoopAsync timer + ExecuteInGameThread on 3.0.1), slow task and 60 s timing logs
+  - objects.lua — per-class cache behind the FindAllOf/FindFirstOf globals (walks: one per tick at most, none in the first 5 s or while battle is busy; FindAllLive for the focus scan)
   - helpers.lua — TryCall, TryGetProperty, GetWidgetName, GetClassName, IsValidRef
-  - speech.lua — Speak/SpeakQueued over the named pipe \\.\pipe\SparkingZeroAccess (applies icon_parser automatically)
+  - speech.lua — Speak/SpeakQueued over the named pipe \\.\pipe\SparkingZeroSpeech to the speech plugin (applies icon_parser automatically)
   - widget_reader.lua — text reading, widget matching, label resolution, list position
   - poll_trackers.lua — dialog, help window, screen change, room ID/status polling
   - icon_parser.lua — converts RichText icon markup to readable text (full PS/Xbox/keyboard mappings)
@@ -513,8 +529,9 @@ Follow-ups:
   - chara_roster.lua — character roster grid: name reading, skills, teamlist (cached TextBlock refs)
   - debug_tools.lua (F3-F8, loaded via require, remove to disable). F6 story map dump + chart_actors.txt, F7 story trace, F8 marker. Trace records speech via Speech.SetListener
 - Dev tooling: helpers\Check-Lua.ps1 (luac -p + tools\luacheck.exe with .luacheckrc), run automatically by helpers\Deploy-Mod.ps1
-- NVDA add-on: nvda-addon\ (manifest.ini, globalPlugins\sparkingZeroAccess.py: ctypes named pipe server, speaks via ui.message). Build: helpers\Build-NvdaAddon.ps1. Offline test: experiments\Test-SpeechPipe.ps1
-- Retired: speech_bridge.dll (Lua C module + UniversalSpeech). Source kept in speech_bridge\ for a possible standalone JAWS/SAPI pipe helper. No gcc on PATH any more; Visual Studio 2022 is installed
+- Speech plugin: speech_plugin\SparkingZeroSpeech.c → SparkingZeroSpeech.asi (build.ps1 -Deploy; MSVC 14.44 + Windows SDK 10.0.26100 are installed, no gcc). Named pipe server thread + UniversalSpeech, loaded by the Ultimate ASI Loader from Win64\plugins. Log: plugins\SparkingZeroSpeech.log
+- Retired: speech_bridge.dll (Lua C module). Source kept in speech_bridge\ for reference
+- Test launches: helpers\Launch-Game.ps1, helpers\Drive-Game.ps1 (Steam launch, log watch, SendKeys)
 - Git repo initialized at mod directory (branch: main)
 
 ## Files Modified in Game Directory
@@ -526,4 +543,6 @@ Original manual setup:
 - SparkingZERO\Binaries\Win64\Mods\SparkingZeroAccess\ (our mod)
 - SparkingZERO\Binaries\Win64\UniversalSpeech.dll, nvdaControllerClient.dll, ZDSRAPI.dll (retired 2026-09-12, no longer deployed)
 
-Outside the game directory (2026-09-12): %APPDATA%\nvda\addons\SparkingZeroAccess (the NVDA add-on), build\stage\ue4ss-experimental-* and build\backup\ue4ss-3.0.1 (UE4SS builds for Switch-UE4SS.ps1)
+Added 2026-09-13: SparkingZERO\Binaries\Win64\plugins\SparkingZeroSpeech.asi, UniversalSpeech.dll, nvdaControllerClient.dll, ZDSRAPI.dll (+ SparkingZeroSpeech.log at runtime)
+
+Outside the game directory: build\stage\ue4ss-experimental-* and build\backup\ue4ss-3.0.1 (UE4SS builds for Switch-UE4SS.ps1), build\cache\zDEV-UE4SS_v3.0.1.zip (no C++ SDK inside). The NVDA add-on folder %APPDATA%\nvda\addons\SparkingZeroAccess was removed

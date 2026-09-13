@@ -33,7 +33,7 @@ Requirements:
 
 ## Switch-UE4SS.ps1
 
-Installs the experimental UE4SS build or restores 3.0.1 in the game, without touching `mods.txt` or the mod folder. Refuses to run while the game is running.
+Installs the experimental UE4SS build or restores 3.0.1 in the game, without touching `mods.txt` or the mod folder. Refuses to run while the game is running. The experimental build kills this game a few seconds after start even with the mod disabled (2026-09-13), so `stable` is the only working choice; the script stays for future UE4SS builds.
 
 ```
 powershell -ExecutionPolicy Bypass -File helpers\Switch-UE4SS.ps1 -Build experimental
@@ -44,13 +44,20 @@ powershell -ExecutionPolicy Bypass -File helpers\Switch-UE4SS.ps1 -Status
 - `experimental` copies `UE4SS.dll` and the default mods from the newest `build\stage\ue4ss-experimental-*` folder (the extracted experimental zip) and writes `UE4SS-settings.ini` from that build's template with the mod's settings. The 3.0.1 `dwmapi.dll` proxy stays; it loads `UE4SS.dll` from the same folder.
 - `stable` restores `dwmapi.dll`, `UE4SS.dll`, the settings, and the default mods from `build\backup\ue4ss-3.0.1`.
 
-## Build-NvdaAddon.ps1
+## Launch-Game.ps1 and Drive-Game.ps1
 
-Packages `nvda-addon\` into `build\output\SparkingZeroAccess-<version>.nvda-addon`, with the version from `VERSION`. Install it by pressing Enter on the file with NVDA running, then restart NVDA.
+Test the mod without a tester. `Launch-Game.ps1` starts the game through Steam (`steam://rungameid/1790600`), watches the process and `UE4SS.log` for `-Timeout` seconds, stops the game unless `-KeepRunning`, and prints the `[AE]` log lines, the last log lines, new crash dumps, and the speech plugin log. `Drive-Game.ps1` also sends keys to the game window at given seconds after the process appeared.
 
 ```
-powershell -ExecutionPolicy Bypass -File helpers\Build-NvdaAddon.ps1
+powershell -ExecutionPolicy Bypass -File helpers\Launch-Game.ps1 -Timeout 80 -Label "baseline"
+powershell -ExecutionPolicy Bypass -File helpers\Drive-Game.ps1 -Steps "40:{ENTER}","46:{DOWN}","49:{UP}"
 ```
+
+Game-thread crashes end the process silently: no crash dump, no Windows error event, `UE4SS.log` simply stops. The scripts report "exited=<time>" in that case. Your screen reader will speak during these runs.
+
+## speech_plugin\build.ps1
+
+Builds `speech_plugin\SparkingZeroSpeech.asi` with MSVC (Visual Studio 2022 Build Tools + Windows SDK) or MinGW gcc, and with `-Deploy` copies it and the UniversalSpeech DLLs into the game's `Win64\plugins` folder. The plugin log is `Win64\plugins\SparkingZeroSpeech.log`.
 
 ## Update-CharaNames.py
 

@@ -118,6 +118,10 @@ foreach ($item in 'dwmapi.dll', 'UE4SS.dll', 'UE4SS-settings.ini', 'Mods') {
     Copy-Item -LiteralPath (Join-Path $ue4ssDir $item) -Destination $manualDir -Recurse
 }
 Copy-Item -Path (Join-Path $bypassDir '*') -Destination $manualDir -Recurse
+# Speech plugin next to the bypass plugin
+foreach ($item in 'SparkingZeroSpeech.asi', 'UniversalSpeech.dll', 'nvdaControllerClient.dll', 'ZDSRAPI.dll') {
+    Copy-Item -LiteralPath (Join-Path $RepoRoot "speech_plugin\$item") -Destination (Join-Path $manualDir 'plugins')
+}
 $modTarget = Join-Path $manualDir 'Mods\SparkingZeroAccess\Scripts'
 New-Item -ItemType Directory -Force -Path $modTarget | Out-Null
 Copy-Item -Path (Join-Path $RepoRoot 'SparkingZeroAccess\*') -Destination $modTarget -Recurse

@@ -100,8 +100,13 @@ Source: "{#StageDir}\ue4ss\Mods\mods.txt"; DestDir: "{#Win64Dir}\Mods"; Flags: o
 ; UTOC signature bypass
 Source: "{#StageDir}\bypass\dsound.dll"; DestDir: "{#Win64Dir}"; Flags: ignoreversion
 Source: "{#StageDir}\bypass\plugins\*"; DestDir: "{#Win64Dir}\plugins"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Speech plugin (ASI, loaded by the bypass's Ultimate ASI Loader) and the screen reader libraries it loads
+Source: "..\speech_plugin\SparkingZeroSpeech.asi"; DestDir: "{#Win64Dir}\plugins"; Flags: ignoreversion
+Source: "..\speech_plugin\UniversalSpeech.dll"; DestDir: "{#Win64Dir}\plugins"; Flags: ignoreversion
+Source: "..\speech_plugin\nvdaControllerClient.dll"; DestDir: "{#Win64Dir}\plugins"; Flags: ignoreversion
+Source: "..\speech_plugin\ZDSRAPI.dll"; DestDir: "{#Win64Dir}\plugins"; Flags: ignoreversion
 
-; The mod (Lua scripts; speech goes to the NVDA add-on over a named pipe)
+; The mod (Lua scripts; speech goes to the plugin in plugins\ over a named pipe)
 Source: "..\SparkingZeroAccess\*"; DestDir: "{#Win64Dir}\Mods\{#ModName}\Scripts"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\THIRD-PARTY-NOTICES.txt"; DestDir: "{#Win64Dir}\Mods\{#ModName}"; Flags: ignoreversion
 

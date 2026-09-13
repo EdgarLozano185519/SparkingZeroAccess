@@ -33,18 +33,26 @@ Note: LoopAsync is deprecated in UE4SS dev builds. Replacement is `LoopInGameThr
 - `FindAllOf` returns nil when nothing is found; `FindFirstOf` returns an object wrapper (check `IsValid`)
 - Crash dumps from the World Tournament crash and all fix attempts: branch experiment/game-thread-registry
 
-### Experimental UE4SS build (in use since 2026-09-12, UE4SS_v3.0.1-1133-gb4cefa18)
+### Experimental UE4SS builds (tested 2026-09-12/13, NOT usable on this game)
 
-- Adds `LoopInGameThreadWithDelay`, `ExecuteInGameThreadWithDelay`, `ExecuteInGameThreadAfterFrames`, `IsInGameThread`, engine tick scheduling, NotifyOnNewObject callbacks queued to the game thread, FUObjectHashTables lookups
-- Its bundled Lua 5.4.7 is modified (`lua_lock` → `LuaLock`), and UE4SS exports no Lua C API, so a Lua C module (the old `speech_bridge.dll`) makes the game close at startup. Speech therefore goes over a named pipe (`speech.lua` → NVDA add-on)
-- The mod's `game_thread.lua` uses `LoopInGameThreadWithDelay(16, Tick)` when present and falls back to the 3.0.1 timer otherwise. Nothing outside game_thread.lua may call `LoopAsync`, `ExecuteWithDelay`, `ExecuteInGameThread` or `RegisterKeyBind` (`.luacheckrc` enforces it); use `GT.Every`, `GT.After`, `GT.OnKey`
-- Installed with `helpers\Switch-UE4SS.ps1 -Build experimental`: `UE4SS.dll`, default mods and settings from the experimental zip, 3.0.1 `dwmapi.dll` proxy kept (flat Win64 layout; the experimental proxy expects a `ue4ss\` subfolder and is untested here)
+- They add `LoopInGameThreadWithDelay`, engine tick scheduling, NotifyOnNewObject callbacks queued to the game thread and FUObjectHashTables lookups, and their bundled Lua is modified (`lua_lock` → `LuaLock`, so no Lua C modules)
+- UE4SS_v3.0.1-1133-gb4cefa18 kills the game about 3 s after the mods start even with this mod disabled (no dump, no Windows event). `helpers\Switch-UE4SS.ps1` can install/restore builds for future retests
+- `game_thread.lua` keeps the `LoopInGameThreadWithDelay` path (with a fallback to the timer when it never ticks), but on 3.0.1 the timer + `ExecuteInGameThread` path is what runs. Nothing outside game_thread.lua may call `LoopAsync`, `ExecuteWithDelay`, `ExecuteInGameThread` or `RegisterKeyBind` (`.luacheckrc` enforces it); use `GT.Every`, `GT.After`, `GT.OnKey`
 
-### Transition hooks in this game (verified from UE4SS.log, 2026-09-12)
+### Measured on UE4SS 3.0.1, game thread, title screen (2026-09-13)
+
+- `FindAllOf` / `FindFirstOf`: 28–50 ms per call (any class), 136–150 ms while the game is loading. 811 live UserWidgets out of 1624, 442 live TextBlocks of 725
+- Per object: `GetFullName` 3 µs, `IsVisible` and `HasKeyboardFocus` 7 µs, `IsValid` ~0, `GetClass():GetFName():ToString()` 2.5 µs. A focus scan over all live user widgets is ~6 ms
+- Widget blueprints expose their named child widgets as properties (`widget.RichText_MainTalk`, `widget.Text_EventTitle`): direct access, no walk. An unknown property name returns an invalid UObject wrapper (check `IsValid`), not nil
+- Objects the game already holds: `SSBattlePlayerController.TextAreaUi` / `TextAreaUiMainMenu` (speech bubble `WBP_OBJ_Common_TexWin_Black_C`) / `TextAreaUiMainMenuSet` / `GuideWidget` / `GuideWidgetPause` / `PauseManager` / `MenuGeneralDialog` / `HelpDialog` / `PlayerInfoWidget` (many nil outside their screens); every SS menu widget derives from `SSMenuManager` with `LastFocusedWidget`; `GameInstance` has `MenuInterruptManager`, `NotificationManager`, `WaitingIconManager`
+- Out params: pass one Lua table per out param; after the call the value is under `table.ParamName`. BROKEN in 3.0.1 when an out param is followed by more params (table stays on the stack) and for TArray out params (never written). `GetAllWidgetsOfClass`, `GetAllActorsOfClass`, `GetViewportSize` all fail; the error object is a function, not a string
+- Walking `FindAllOf("Widget")` or `FindAllOf("Actor")` and registering a `RegisterHook` on `PlayerController:ClientRestart` from this mod both killed the game (see docs/known-issues.md)
+
+### Transition signals in this game
 
 - `RegisterLoadMapPreHook` / `RegisterLoadMapPostHook` fire once at startup and never again: battle maps and menus load through seamless travel or streaming, not `UEngine::LoadMap`
-- `RegisterHook("/Script/Engine.PlayerController:ClientRestart", ...)` fires on every world change (new PlayerController), including the World Tournament transition that used to crash. Candidate for pausing or resetting state on transitions
-- The `UStruct::SuperStruct = 0x40` line in the member offsets dump identified the crash: the object walk called IsChildOf on a null class pointer of an object being destroyed
+- `PlayerController:ClientRestart` fires on every world change (CheatManagerEnablerMod's hook proves it), but hooking it from this mod crashed the game at startup. main.lua tracks the PlayerController object instead: when the cached one dies (`IsValid` false), the world changed
+- The `UStruct::SuperStruct = 0x40` line in the member offsets dump identified the original crash: the async object walk called IsChildOf on a null class pointer of an object being destroyed
 
 ## UObject Lookup
 
