@@ -21,7 +21,20 @@
 - [x] Inno Setup installer replaces AccessForge (2026-09-12) — see "Distribution / Installer"
 - [x] Lua dev tooling (2026-09-12): Lua 5.4.6 (winget DEVCOM.Lua, luac -p) + tools\luacheck.exe 1.2.0 (gitignored) + .luacheckrc + helpers\Check-Lua.ps1. Deploy-Mod.ps1 runs the check first. First run found: battle.lua Battle.Reset() cleared old undeclared enemy vars instead of _enemyState, so opponent HP/KI state leaked into the next battle (fixed: _enemyState = {}; UNTESTED in battle), and allTB/allRTB scope bug in F5 dump (fixed). 28 non-blocking warnings remain (unused vars/imports, shadowing) — cleanup candidate
 
-## Session Handoff (2026-09-12, night) — Pipe Speech + Game Thread on Experimental UE4SS (UNTESTED)
+## IN PROGRESS (2026-09-13, early morning) — native speech plugin + object registry on UE4SS 3.0.1
+
+User feedback: the experimental UE4SS build did not start the game, and NO NVDA add-on (users should not have to install one). Direction: option 3, native code.
+
+Verified by launching the game from scripts (Launch-Game.ps1 in the session scratchpad, Steam URL + log watching):
+- Experimental UE4SS (gb4cefa18) kills the game ~3 s after mods start EVEN WITH THE MOD DISABLED, no dump, no Windows error (game-thread crash inside UE's guarded main = silent exit). Unusable on this game. Restored 3.0.1 (Switch-UE4SS -Build stable)
+- Speech now: `speech_plugin\SparkingZeroSpeech.asi` (plain C, MSVC, built by speech_plugin\build.ps1 -Deploy) loaded by the Ultimate ASI Loader (dsound.dll, already installed for the UTOC bypass) from Win64\plugins\, together with UniversalSpeech.dll + nvdaControllerClient.dll + ZDSRAPI.dll there. It serves the pipe `\\.\pipe\SparkingZeroSpeech` (speech.lua renamed to match) and speaks via UniversalSpeech. Log: plugins\SparkingZeroSpeech.log. WORKS (game connected, startup dialogs and "Press confirm to start" logged). NVDA add-on removed from the repo and from %APPDATA%\nvda\addons
+- 3.0.1 + game_thread.lua (LoopAsync + ExecuteInGameThread fallback) + plugin: game ran 110 s, no crash, but the reader tick averages 36 ms (max 210) because every poll does a FindAllOf walk (47–50 ms each on the game thread)
+- Probes (game thread, title screen, 811 live UserWidgets of 1624): FindAllOf(UserWidget) 47 ms; GetFullName 3 µs/obj; IsVisible / HasKeyboardFocus 7 µs/obj (6 ms per full scan); IsValid ~0; only 6 widgets visible. BindWidget properties work: `widget.RichText_MainTalk` returns the child widget directly (unknown property returns an invalid UObject, check IsValid)
+- Dead ends on 3.0.1: UFunctions with out params (GetAllWidgetsOfClass, GetViewportSize...) are broken in 3.0.1's Lua (out-param table stays on the stack, array out params never pushed); NotifyOnNewObject runs Lua unlocked on the constructing thread; zDEV-UE4SS_v3.0.1.zip has no C++ SDK (UE4SS.dll does export LuaType/LuaMadeSimple/Hook symbols, so a C++ mod remains possible with a generated import lib and repo headers)
+- Game-owned widget refs found: SSBattlePlayerController.TextAreaUi / TextAreaUiMainMenu (speech bubble WBP_OBJ_Common_TexWin_Black_C) / TextAreaUiMainMenuSet / GuideWidget / PauseManager / MenuGeneralDialog / HelpDialog / PlayerInfoWidget ... (most nil on the title screen); SSMenuManager base class has LastFocusedWidget; GameInstance has MenuInterruptManager, NotificationManager, WaitingIconManager
+- Plan being implemented: objects.lua registry (one FindAllOf("Widget") + FindAllOf("Actor") walk at startup, after PlayerController:ClientRestart, on explicit request, or on a miss rate-limited to 3 s and never while battle is busy); FindAllOf/FindFirstOf globals overridden in main.lua to serve from the cache
+
+## Session Handoff (2026-09-12, night) — Pipe Speech + Game Thread on Experimental UE4SS (SUPERSEDED, see above)
 
 Branch: `feature/pipe-speech-game-thread` (not merged into main until the in-game test passes). Everything below is deployed to the game and to NVDA already; nothing has been run in the game yet.
 

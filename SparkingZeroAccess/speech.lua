@@ -21,7 +21,7 @@ local IconParser = require("icon_parser")
 
 local Speech = {}
 
-local PIPE_PATH = [[\\.\pipe\SparkingZeroAccess]]
+local PIPE_PATH = [[\\.\pipe\SparkingZeroSpeech]]
 local RETRY_SECONDS = 3.0
 
 local _pipe = nil

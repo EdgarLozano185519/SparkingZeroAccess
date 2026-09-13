@@ -53,6 +53,10 @@ local _timerStartAnnounced = false -- have we announced the initial time limit
 
 -- Result screen state
 local _resultAnnounced = false  -- have we announced the result screen
+-- Object registry: refreshes (50-130 ms walks) are paused while a battle runs
+local Objects = require("objects")
+local _noPawnPolls = 0  -- PollHUD calls without a player pawn while busy
+
 local _resultResetCallback = nil -- callback to trigger full reset when result screen closes
 local _cachedResultWidget = nil -- live ref to the visible+Transient result widget once found
 local _resultMissUntil = 0      -- throttle for negative FindAllOf results during battle
@@ -340,8 +344,14 @@ function Battle.PollHUD(Speak, SpeakQueued)
     if not pawn then
         -- Pawn briefly nil during animations/events — don't reset tracking state.
         -- All state resets only on map transition (Battle.Reset).
+        -- But after ~5 s without a pawn the battle is over: let the registry refresh again.
+        if Objects.IsBusy() then
+            _noPawnPolls = _noPawnPolls + 1
+            if _noPawnPolls >= 30 then Objects.SetBusy(false, "no pawn") end
+        end
         return
     end
+    _noPawnPolls = 0
 
     local gauges = ReadGauges(pawn)
     if not gauges or not gauges.hp then return end
@@ -358,6 +368,7 @@ function Battle.PollHUD(Speak, SpeakQueued)
         _lastSparkingBars = currentSparkBars
         _lastSkillPoints = gauges.blast or 0
         _battleWasActive = true
+        Objects.SetBusy(true, "battle")
         print("[AE] Battle started: HP=" .. gauges.hp .. " (max)")
         return
     end
@@ -376,6 +387,9 @@ function Battle.PollHUD(Speak, SpeakQueued)
         if timerSecs ~= TIMER_INFINITE and _lastTimerSeconds and timerSecs ~= _lastTimerSeconds then
                 if timerSecs % 30 == 0 then
                 Speak(timerSecs .. " seconds", true)
+            end
+            if timerSecs == 0 then
+                Objects.SetBusy(false, "time over")
             end
             if timerSecs <= 10 and timerSecs > 0 then
                 -- Final countdown on 10, 5, 4, 3, 2, 1 seconds
@@ -408,6 +422,7 @@ function Battle.PollHUD(Speak, SpeakQueued)
 
         if gauges.hp <= 0 and (_lastPlayerHP or 0) > 0 then
             Speak("HP empty", true)
+            Objects.SetBusy(false, "player HP empty")
         else
             for i, threshold in ipairs(HP_THRESHOLDS) do
                 if hpPercent <= threshold and (_lastHPThreshold or 0) < i then
@@ -479,6 +494,7 @@ function Battle.PollHUD(Speak, SpeakQueued)
 
                 if eg.hp <= 0 and es.lastHP > 0 then
                     Speak("Enemy HP empty", true)
+                    Objects.SetBusy(false, "enemy HP empty")
                 else
                     for i, threshold in ipairs(HP_THRESHOLDS) do
                         if enemyPercent <= threshold and es.lastThreshold < i then
@@ -678,6 +694,7 @@ function Battle.PollResult(Speak, SpeakQueued)
 
     -- Now we have real data — announce and mark done
     _resultAnnounced = true
+    Objects.SetBusy(false, "result screen")
     if #parts > 0 then
         Speak(table.concat(parts, ", "), true)
         print("[AE] Result: " .. table.concat(parts, ", "))
@@ -695,6 +712,8 @@ function Battle.SetResetCallback(callback)
 end
 
 function Battle.Reset()
+    Objects.SetBusy(false, "reset")
+    _noPawnPolls = 0
     _introAnnounced = false
     _resultAnnounced = false
     _inBattle = false

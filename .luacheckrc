@@ -29,6 +29,11 @@ read_globals = {
 
 exclude_files = { "build/**", "speech_bridge/**" }
 
+-- objects.lua captures the real UE4SS lookups; main.lua replaces the globals with the cached versions
+files["**/main.lua"] = {
+    globals = { "FindAllOf", "FindFirstOf" },
+}
+
 files["**/game_thread.lua"] = {
     read_globals = { "LoopAsync", "ExecuteInGameThread", "RegisterKeyBind", "LoopInGameThreadWithDelay" },
 }

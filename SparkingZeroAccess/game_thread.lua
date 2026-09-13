@@ -58,7 +58,9 @@ local _timer = {
     finishedAt = 0.0,
     requeues = 0,
     queueErrors = 0,
+    nativeFallback = false,
 }
+local _reportedNativeFallback = false
 local _started = false
 local _tickId = 0  -- increments at the start of every tick
 
@@ -137,6 +139,10 @@ end
 
 local function RunTick(now)
     -- Timer events are reported here: printing on the async thread allocates
+    if _timer.nativeFallback and not _reportedNativeFallback then
+        _reportedNativeFallback = true
+        print("[AE] LoopInGameThreadWithDelay never ticked (engine tick hook off?), switched to the LoopAsync + ExecuteInGameThread timer")
+    end
     if _timer.requeues ~= _reportedRequeues then
         _reportedRequeues = _timer.requeues
         print("[AE] Game thread tick did not run for " .. STALL_REQUEUE_SECONDS
@@ -271,6 +277,17 @@ function GT.Start()
         local ok, err = pcall(LoopInGameThreadWithDelay, TIMER_INTERVAL_MS, Tick)
         if ok then
             print("[AE] Game thread scheduler started (LoopInGameThreadWithDelay)")
+            -- The native loop needs UE4SS's engine tick hook. If that hook is
+            -- off or never fires, no tick ever runs: fall back to the timer.
+            local checks = 0
+            LoopAsync(1000, function()
+                checks = checks + 1
+                if _tickId > 0 then return true end
+                if checks < 5 then return false end
+                _timer.nativeFallback = true  -- reported from the game thread
+                LoopAsync(TIMER_INTERVAL_MS, TimerCallback)
+                return true
+            end)
             return
         end
         print("[AE] LoopInGameThreadWithDelay failed, using LoopAsync timer: " .. tostring(err))

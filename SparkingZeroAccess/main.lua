@@ -20,6 +20,12 @@ local GetClassName = H.GetClassName
 
 local GT = require("game_thread")
 
+-- Cached object lookups: from here on FindAllOf / FindFirstOf are served from
+-- objects.lua's registry (rare walks) instead of UE4SS's per-call walk.
+local Objects = require("objects")
+FindAllOf = Objects.FindAllOf     -- luacheck: ignore 121
+FindFirstOf = Objects.FindFirstOf -- luacheck: ignore 121
+
 local Speech = require("speech")
 local Speak = Speech.Speak
 local SpeakQueued = Speech.SpeakQueued
@@ -607,7 +613,7 @@ end
 -- pcall on HasKeyboardFocus catches any Lua-level errors on individual widgets.
 
 local function ScanForFocus()
-    local ok, allWidgets = pcall(FindAllOf, "UserWidget")
+    local ok, allWidgets = pcall(Objects.FindAllLive, "UserWidget")
     if not ok or not allWidgets then return nil end
     for i = 1, #allWidgets do
         local w = allWidgets[i]
@@ -719,6 +725,11 @@ local function PollFocus()
     end
 
     focusEmptyScanStreak = focusEmptyScanStreak + 1
+    -- Focus was somewhere a moment ago and is now nowhere in the cached
+    -- widgets: a widget we have not seen yet may have it. Rate-limited inside.
+    if focusEmptyScanStreak == 12 and lastFocusedName ~= nil then
+        Objects.RequestRefresh("focus lost", false, true)
+    end
     -- Nothing focused
     if lastFocusedName ~= nil then
         lastFocusedName = nil
@@ -793,7 +804,45 @@ local slowPollIndex = 0
 
 -- One reader tick on the game thread: focus first (screen reader
 -- responsiveness), then the next slow poll group.
+local worldChanged = false
+local function OnWorldChanged()
+    print("[AE] World changed (ClientRestart), resetting state")
+    ResetStaleState()
+    SkillList.Reset()
+    Battle.Reset()
+    EpisodeBattle.FullReset()
+    EpisodeMap.Reset()
+    H.InvalidateCachedFirstOf()
+    Trackers.ArmTransitionCooldown(0.8)
+end
+
+-- World change signal: the LoadMap hooks never fire in this game (seamless
+-- travel), and a RegisterHook on PlayerController:ClientRestart killed the game
+-- at startup (2026-09-13). Instead the PlayerController is tracked: every world
+-- gets a new one, so the old one dying means a world change.
+local trackedPC = nil
+
 local function ReaderTick()
+    if trackedPC and not IsValidRef(trackedPC) then
+        trackedPC = nil
+        worldChanged = true
+        -- Walk again once the new world has had a moment to spawn its objects
+        Objects.RequestRefresh("world change", true, false, 1.0)
+    end
+    if worldChanged then
+        worldChanged = false
+        OnWorldChanged()
+    end
+    -- Serve pending registry refreshes first, so this tick's polls see them
+    Objects.Tick(GT.TickId())
+    if not trackedPC then
+        local pc = Objects.FindFirstOf("PlayerController")
+        if pc and IsValidRef(pc) then
+            trackedPC = pc
+            local okN, name = pcall(function() return pc:GetFullName() end)
+            print("[AE] Tracking PlayerController: " .. (okN and name or "?"))
+        end
+    end
     if not readerEnabled or Trackers.IsInTransition() or not IsWorldAlive() then
         return false
     end
@@ -880,6 +929,8 @@ if Speech.IsLoaded() then
 else
     print("[AE] Speech not available.")
 end
+
+Objects.Init()
 
 -- Single game thread tick: reader, delayed callbacks, debug keys and loops
 GT.Start()
